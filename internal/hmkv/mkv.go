@@ -1,8 +1,11 @@
 package hmkv
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -117,42 +120,181 @@ func NewMakeMKV(executable string) *MakeMKV {
 	}
 }
 
-func (mkv *MakeMKV) ripTitle(ctx context.Context, title *TitleInfo, destDir string) error {
-	cmd := exec.CommandContext(ctx, mkv.executable, "mkv", fmt.Sprintf("disc:%d", title.DiscId), fmt.Sprintf("%d", title.Index), destDir)
+func (mkv *MakeMKV) ripTitle(ctx context.Context, title *TitleInfo, destDir string, onProgress func(percent int, stage string)) error {
+	cmd := exec.CommandContext(ctx, mkv.executable,
+		"-r", "--progress=-same",
+		"mkv", fmt.Sprintf("disc:%d", title.DiscId), fmt.Sprintf("%d", title.Index), destDir)
 
-	cmdOut, err := cmd.CombinedOutput()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		// write cmdOut to a log file in the dest dir
-		logFilePath := filepath.Join(destDir, "rip_err.log")
-		f, openLogFileErr := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		return fmt.Errorf("failed to create makemkvcon stdout pipe: %w", err)
+	}
 
-		if openLogFileErr != nil {
-			return fmt.Errorf("ripping title from disc was not successful - %w - an error occurred while creating log file - %w", err, openLogFileErr)
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create makemkvcon stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start makemkvcon: %w", err)
+	}
+
+	var stdoutBuf, stderrBuf bytes.Buffer
+	stderrDone := make(chan struct{})
+	go func() {
+		io.Copy(&stderrBuf, stderr)
+		close(stderrDone)
+	}()
+
+	scanner := bufio.NewScanner(io.TeeReader(stdout, &stdoutBuf))
+	scanner.Split(splitProgressLines)
+
+	lastPercent := -1
+	stage := ""
+	for scanner.Scan() {
+		percent, nextStage, kind := parseMakeMKVProgressLine(scanner.Text())
+		switch kind {
+		case "stage":
+			stage = nextStage
+			if onProgress != nil {
+				onProgress(lastPercent, stage)
+			}
+		case "progress":
+			lastPercent = percent
+			if onProgress != nil {
+				onProgress(lastPercent, stage)
+			}
 		}
+	}
 
-		defer f.Close()
+	scanErr := scanner.Err()
+	<-stderrDone
+	waitErr := cmd.Wait()
 
-		// determine OS-specific newline
-		newline := "\n"
-		if runtime.GOOS == "windows" {
-			newline = "\r\n"
+	if scanErr != nil {
+		return fmt.Errorf("error reading makemkvcon output: %w", scanErr)
+	}
+
+	if waitErr != nil {
+		cmdOut := stdoutBuf.String()
+		if stderrBuf.Len() > 0 {
+			cmdOut = cmdOut + stderrBuf.String()
 		}
-
-		// write combined output and error to log in one call
-		logContent := fmt.Sprintf("MakeMKV Output%s%s#####%s%s#####%s%sError: %v",
-			newline, newline, newline,
-			string(cmdOut),
-			newline, newline,
-			err)
-
-		if _, writeLogFileErr := f.WriteString(logContent); writeLogFileErr != nil {
-			return fmt.Errorf("ripping title from disc was not successful - %w - failed to write to log file: %w", err, writeLogFileErr)
-		}
-
-		return fmt.Errorf("ripping title from disc was not successful - mkv error details can be found in log file %s", logFilePath)
+		return writeRipErrorLog(destDir, cmdOut, waitErr)
 	}
 
 	return nil
+}
+
+func writeRipErrorLog(destDir, cmdOut string, err error) error {
+	logFilePath := filepath.Join(destDir, "rip_err.log")
+	f, openLogFileErr := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if openLogFileErr != nil {
+		return fmt.Errorf("ripping title from disc was not successful - %w - an error occurred while creating log file - %w", err, openLogFileErr)
+	}
+	defer f.Close()
+
+	newline := "\n"
+	if runtime.GOOS == "windows" {
+		newline = "\r\n"
+	}
+
+	logContent := fmt.Sprintf("MakeMKV Output%s%s#####%s%s#####%s%sError: %v",
+		newline, newline, newline,
+		cmdOut,
+		newline, newline,
+		err)
+
+	if _, writeLogFileErr := f.WriteString(logContent); writeLogFileErr != nil {
+		return fmt.Errorf("ripping title from disc was not successful - %w - failed to write to log file: %w", err, writeLogFileErr)
+	}
+
+	return fmt.Errorf("ripping title from disc was not successful - mkv error details can be found in log file %s", logFilePath)
+}
+
+// parseMakeMKVProgressLine extracts overall percent from PRGV and stage name
+// from PRGC. kind is "progress", "stage", or "" if the line is unrelated.
+func parseMakeMKVProgressLine(line string) (percent int, stage string, kind string) {
+	line = strings.TrimSpace(line)
+
+	if strings.HasPrefix(line, "PRGV:") {
+		parts := strings.Split(strings.TrimPrefix(line, "PRGV:"), ",")
+		if len(parts) < 3 {
+			return -1, "", ""
+		}
+
+		current, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+		total, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+		max, err3 := strconv.Atoi(strings.TrimSpace(parts[2]))
+		if err1 != nil || err2 != nil || err3 != nil || max <= 0 {
+			return -1, "", ""
+		}
+
+		value := total
+		if value == 0 {
+			value = current
+		}
+
+		percent = int((float64(value) / float64(max)) * 100)
+		if percent > 99 {
+			percent = 99
+		}
+		if percent < 0 {
+			percent = 0
+		}
+		return percent, "", "progress"
+	}
+
+	if strings.HasPrefix(line, "PRGC:") {
+		parts := strings.SplitN(strings.TrimPrefix(line, "PRGC:"), ",", 3)
+		if len(parts) < 3 {
+			return -1, "", ""
+		}
+		name := strings.Trim(parts[2], "\"")
+		if name == "" {
+			return -1, "", ""
+		}
+		return -1, name, "stage"
+	}
+
+	return -1, "", ""
+}
+
+// titleDurationSeconds parses MakeMKV's "H:MM:SS" duration. Returns 0 if invalid.
+func titleDurationSeconds(length string) int {
+	parts := strings.Split(length, ":")
+	if len(parts) != 3 {
+		return 0
+	}
+	h, err1 := strconv.Atoi(parts[0])
+	m, err2 := strconv.Atoi(parts[1])
+	s, err3 := strconv.Atoi(parts[2])
+	if err1 != nil || err2 != nil || err3 != nil {
+		return 0
+	}
+	return h*3600 + m*60 + s
+}
+
+// findLongestTitle returns the index of the longest title. Duration wins;
+// FileSizeBytes is the tie-breaker. Returns -1 if titles is empty.
+func findLongestTitle(titles []TitleInfo) int {
+	if len(titles) == 0 {
+		return -1
+	}
+
+	best := 0
+	for i := 1; i < len(titles); i++ {
+		di := titleDurationSeconds(titles[i].Length)
+		db := titleDurationSeconds(titles[best].Length)
+		if di > db {
+			best = i
+			continue
+		}
+		if di == db && titles[i].FileSizeBytes > titles[best].FileSizeBytes {
+			best = i
+		}
+	}
+	return best
 }
 
 func (mkv *MakeMKV) getTitlesFromDisc(discId int) ([]TitleInfo, error) {

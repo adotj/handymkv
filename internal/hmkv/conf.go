@@ -31,6 +31,8 @@ type handyMKVConfig struct {
 	MKVOutputDirectory string         `json:"mkv_output_directory"`
 	HBOutputDirectory  string         `json:"handbrake_output_directory"`
 	DeleteRawMKVFiles  bool           `json:"delete_raw_mkv_files"`
+	OrganizeToLibrary  bool           `json:"organize_to_library"`
+	LibraryRoot        string         `json:"library_root,omitempty"`
 	DisableManifests   bool           `json:"disable_manifests,omitempty"`
 	ManifestDirectory  string         `json:"manifest_directory,omitempty"`
 }
@@ -75,6 +77,14 @@ func (config *handyMKVConfig) String() string {
 	fmt.Fprintf(&sb, "MKV Output Directory: %s\n", config.MKVOutputDirectory)
 	fmt.Fprintf(&sb, "HandBrake Output Directory: %s\n", config.HBOutputDirectory)
 	fmt.Fprintf(&sb, "Automatically Delete Raw MKV Files: %t\n", config.DeleteRawMKVFiles)
+	fmt.Fprintf(&sb, "Organize Encoded Files To Library:  %t\n", config.OrganizeToLibrary)
+	if config.OrganizeToLibrary {
+		libraryRoot := config.LibraryRoot
+		if libraryRoot == "" {
+			libraryRoot = defaultLibraryRoot()
+		}
+		fmt.Fprintf(&sb, "Library Root:                       %s\n", libraryRoot)
+	}
 	fmt.Fprintf(&sb, "Disable Run History:                %t\n", config.DisableManifests)
 	if !config.DisableManifests && config.ManifestDirectory != "" {
 		fmt.Fprintf(&sb, "Manifest Directory:                 %s\n", config.ManifestDirectory)
@@ -145,6 +155,11 @@ func readConfigFile(filePath string) (*handyMKVConfig, error) {
 		return nil, fmt.Errorf("error reading config file - %w", err)
 	}
 
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(fileData, &raw); err != nil {
+		return nil, fmt.Errorf("error parsing config file - %w", err)
+	}
+
 	var cfg handyMKVConfig
 
 	err = json.Unmarshal(fileData, &cfg)
@@ -152,6 +167,12 @@ func readConfigFile(filePath string) (*handyMKVConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error parsing config file - %w", err)
 	}
+
+	if _, ok := raw["organize_to_library"]; !ok {
+		cfg.OrganizeToLibrary = true
+	}
+
+	applyLibraryConfigDefaults(&cfg)
 
 	if cfg.EncodeConfig.PresetFile != "" {
 		presetFile, err := readPresetFile(cfg.EncodeConfig.PresetFile)
@@ -445,6 +466,23 @@ func promptForConfig(hb *HandBrakeCLI, configLocationSelection int) (*handyMKVCo
 		true)
 
 	clear()
+
+	config.OrganizeToLibrary = promptForBool(
+		"Organize encoded files into a Jellyfin-style media library after encoding?",
+		"If enabled, finished files are moved to LibraryRoot\\Movie Name (Year)\\Movie Name (Year).<ext>.",
+		true,
+	)
+	clear()
+
+	if config.OrganizeToLibrary {
+		config.LibraryRoot = promptForString(
+			"Where should organized movie files be saved?",
+			"Absolute path to your media library root folder.",
+			defaultLibraryRoot(),
+			nil,
+		)
+		clear()
+	}
 
 	config.DisableManifests = promptForBool(
 		"Disable run history logging?",

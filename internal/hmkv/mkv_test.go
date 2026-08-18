@@ -115,3 +115,98 @@ func TestSubdirectory(t *testing.T) {
 		})
 	}
 }
+
+func TestParseMakeMKVProgressLine(t *testing.T) {
+	tests := []struct {
+		name        string
+		line        string
+		wantKind    string
+		wantPercent int
+		wantStage   string
+	}{
+		{
+			name:        "prgv overall progress",
+			line:        "PRGV:4122,12850,65536",
+			wantKind:    "progress",
+			wantPercent: 19, // 12850/65536*100
+		},
+		{
+			name:        "prgv caps at 99",
+			line:        "PRGV:65536,65536,65536",
+			wantKind:    "progress",
+			wantPercent: 99,
+		},
+		{
+			name:        "prgv uses current when total is 0",
+			line:        "PRGV:16384,0,65536",
+			wantKind:    "progress",
+			wantPercent: 25,
+		},
+		{
+			name:      "prgc stage name",
+			line:      `PRGC:2012,0,"Saving to MKV file"`,
+			wantKind:  "stage",
+			wantStage: "Saving to MKV file",
+		},
+		{
+			name:      "prgc decrypting",
+			line:      `PRGC:5014,0,"Decrypting DVD"`,
+			wantKind:  "stage",
+			wantStage: "Decrypting DVD",
+		},
+		{
+			name:     "unrelated line",
+			line:     `MSG:1005,0,1,"Operation successfully completed"`,
+			wantKind: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			percent, stage, kind := parseMakeMKVProgressLine(tt.line)
+			if kind != tt.wantKind {
+				t.Fatalf("kind = %q, want %q", kind, tt.wantKind)
+			}
+			if kind == "progress" && percent != tt.wantPercent {
+				t.Errorf("percent = %d, want %d", percent, tt.wantPercent)
+			}
+			if kind == "stage" && stage != tt.wantStage {
+				t.Errorf("stage = %q, want %q", stage, tt.wantStage)
+			}
+		})
+	}
+}
+
+func TestFindLongestTitle(t *testing.T) {
+	titles := []TitleInfo{
+		{Index: 0, FileName: "short.mkv", Length: "0:05:00", FileSizeBytes: 100},
+		{Index: 1, FileName: "feature.mkv", Length: "1:45:12", FileSizeBytes: 800},
+		{Index: 2, FileName: "trailer.mkv", Length: "0:02:10", FileSizeBytes: 50},
+	}
+
+	got := findLongestTitle(titles)
+	if got != 1 {
+		t.Fatalf("findLongestTitle() = %d, want 1", got)
+	}
+
+	tied := []TitleInfo{
+		{Index: 0, Length: "1:00:00", FileSizeBytes: 100},
+		{Index: 1, Length: "1:00:00", FileSizeBytes: 250},
+	}
+	if findLongestTitle(tied) != 1 {
+		t.Fatalf("findLongestTitle() tie-break = %d, want 1", findLongestTitle(tied))
+	}
+
+	if findLongestTitle(nil) != -1 {
+		t.Fatalf("findLongestTitle(nil) = %d, want -1", findLongestTitle(nil))
+	}
+}
+
+func TestTitleDurationSeconds(t *testing.T) {
+	if got := titleDurationSeconds("1:45:12"); got != 6312 {
+		t.Errorf("titleDurationSeconds(1:45:12) = %d, want 6312", got)
+	}
+	if got := titleDurationSeconds("bad"); got != 0 {
+		t.Errorf("titleDurationSeconds(bad) = %d, want 0", got)
+	}
+}

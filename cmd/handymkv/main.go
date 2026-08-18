@@ -191,11 +191,16 @@ func main() {
 	// Parse command line args
 	var discIds string
 	var automationNames string
+	var titleMode string
+	var movieName string
 	var version bool
 
 	flag.BoolVar(&version, "v", false, "Version. Prints the version of the application.")
 	flag.StringVar(&discIds, "d", "0", "Discs. A comma delimited list of disc indexes to rip. Example: -d 0,1,2")
 	flag.StringVar(&automationNames, "a", "", "Automations. A comma delimited list of automation names to run after encoding. Example: -a move-to-plex,notify-discord")
+	flag.StringVar(&titleMode, "t", "", "Title selection. Use 'longest' to auto-select the longest title and skip the prompt.")
+	flag.StringVar(&titleMode, "title", "", "Title selection. Same as -t. Use 'longest' to skip the prompt and rip the longest title.")
+	flag.StringVar(&movieName, "n", "", "Movie name. Jellyfin-style name with year, e.g. \"The Shining (1980)\". Skips naming prompts.")
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
@@ -257,6 +262,12 @@ func main() {
 
 	slices.Sort(discIdInts)
 
+	titleMode = strings.TrimSpace(titleMode)
+	if titleMode != "" && !strings.EqualFold(titleMode, "longest") {
+		fmt.Printf("Invalid title selection value %q. Use -t longest.\n\n", titleMode)
+		return
+	}
+
 	var autoNames []string
 	if automationNames != "" {
 		seen := make(map[string]struct{})
@@ -271,7 +282,7 @@ func main() {
 		}
 	}
 
-	err = hmkv.Exec(mkv, hb, discIdInts, getVersion(), autoNames)
+	err = hmkv.Exec(mkv, hb, discIdInts, getVersion(), autoNames, titleMode, strings.TrimSpace(movieName))
 	if err != nil {
 		if err == hmkv.ErrConfigNotFound {
 			fmt.Printf("Config file not found. Please run the configuration wizard with 'handymkv -c'.\n\n")

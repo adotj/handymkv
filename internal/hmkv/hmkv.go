@@ -14,8 +14,9 @@ import (
 
 // Executes the main functionality of the program.
 // Reads the configuration file, reads titles from the disc, prompts the user for which titles they want to rip,
-// and processes the selected titles.
-func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, automationNames []string) error {
+// and processes the selected titles. titleMode may be "longest" to skip the prompt and auto-select
+// the longest title on each disc.
+func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, automationNames []string, titleMode string, movieName string) error {
 	config, err := ReadConfig()
 
 	if err != nil {
@@ -53,52 +54,36 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 
 		fmt.Printf("The following titles were read from the disc - %s\n\n", titles[0].DiscTitle)
 
-		for _, title := range titles {
-			fmt.Printf("ID: %d, Title Name: %s, Size: %s, Length: %s\n", title.Index, title.FileName, title.FileSizeDesc, title.Length)
+		longestIdx := findLongestTitle(titles)
+		for i, title := range titles {
+			marker := ""
+			if i == longestIdx {
+				marker = " (longest)"
+			}
+			fmt.Printf("ID: %d, Title Name: %s, Size: %s, Length: %s%s\n", title.Index, title.FileName, title.FileSizeDesc, title.Length, marker)
 		}
 
 		var titleSelections string
+		if strings.EqualFold(titleMode, "longest") {
+			titleSelections = "longest"
+			if longestIdx >= 0 {
+				fmt.Printf("\nAuto-selected longest title: ID %d (%s, %s)\n", titles[longestIdx].Index, titles[longestIdx].FileName, titles[longestIdx].Length)
+			}
+		} else {
+			fmt.Print("\nEnter the IDs of the titles to process (0,1,2...) or 'all'. Press Enter to select the longest title: \n\n")
+			titleSelections = readLine()
+		}
 
-		// Prompt the user for input
-		fmt.Print("\nEnter the IDs of the titles to process (0,1,2...) or enter 'all' to process all titles: \n\n")
-		titleSelections = readLine()
-
-		// Remove invalid characters
-		titleSelections = strings.ReplaceAll(titleSelections, " ", "")
-		titleSelections = strings.Trim(titleSelections, ",")
-		titleSelections = strings.ReplaceAll(titleSelections, "(", "")
-		titleSelections = strings.ReplaceAll(titleSelections, ")", "")
-
-		if titleSelections == "" {
-			fmt.Printf("No title selections detected. Exiting.\n\n")
+		selected, selErr := applyTitleSelection(titles, titleSelections)
+		if selErr != nil {
+			fmt.Printf("\n%s\n\n", selErr.Error())
 			return nil
 		}
-
-		// If the user entered 'all', don't filter the titles
-		if titleSelections != "all" {
-			rawIds := strings.Split(titleSelections, ",")
-			selectedIds := make([]int, 0)
-
-			for _, rawIds := range rawIds {
-				id, err := strconv.Atoi(rawIds)
-
-				if err != nil {
-					fmt.Printf("\nInvalid title selection input detected.\n\n")
-					return nil
-				}
-
-				selectedIds = append(selectedIds, id)
-			}
-
-			if len(selectedIds) < 1 {
-				fmt.Printf("\nNo selected titles detected.\n\n")
-				return nil
-			}
-
-			titles = slices.DeleteFunc(titles, func(x TitleInfo) bool {
-				return !slices.Contains(selectedIds, x.Index)
-			})
+		if !strings.EqualFold(titleMode, "longest") && strings.TrimSpace(titleSelections) == "" && len(selected) == 1 {
+			fmt.Printf("Selected longest title: ID %d (%s)\n", selected[0].Index, selected[0].FileName)
 		}
+
+		titles = selected
 
 		processTitles = append(processTitles, titles...)
 
@@ -248,7 +233,9 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 
 				tracker.applyChange(params.TitleIndex, params.DiscId, func(status *titleStatus) {
 					status.Encoding = InProgress
-					status.EncodingProgress = 0
+					status.EncodingProgress = -1
+					status.EncodingETA = ""
+					status.EncodingStage = ""
 				})
 
 				// Make sure the input file exists
@@ -258,9 +245,18 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 					return
 				}
 
-				hbProgressUpdate := func(percent int) {
+				hbProgressUpdate := func(percent int, eta string, stage string) {
 					tracker.applyChange(params.TitleIndex, params.DiscId, func(status *titleStatus) {
-						status.EncodingProgress = percent
+						if stage != "" {
+							status.EncodingStage = stage
+						}
+						if percent >= 0 {
+							status.EncodingProgress = percent
+							status.EncodingETA = eta
+							if stage == "" {
+								status.EncodingStage = ""
+							}
+						}
 					})
 				}
 
@@ -319,6 +315,11 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 		fmt.Printf("Total disk space saved via encoding - %s\n", formatSavedSpace(totalSizeRaw-totalSizeEncoded))
 	}
 
+	libraryPaths, err := organizeEncodedFilesToLibrary(manifestEntries, processTitles, config, movieName)
+	if err != nil {
+		return fmt.Errorf("library organization failed: %w", err)
+	}
+
 	// Run automations before raw file deletion so scripts can access raw MKV files
 	var automationEntries []manifestAutomation
 	if len(selectedAutomations) > 0 {
@@ -360,8 +361,15 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 		deleteRawFiles(config)
 	}
 
-	// Tell the user where the encoded files are located
-	fmt.Printf("\nEncoded files are located in: %s\n\n", config.HBOutputDirectory)
+	if len(libraryPaths) > 0 {
+		fmt.Printf("\nOrganized library files:\n")
+		for _, path := range libraryPaths {
+			fmt.Printf("  %s\n", path)
+		}
+		fmt.Println()
+	} else {
+		fmt.Printf("\nEncoded files are located in: %s\n\n", config.HBOutputDirectory)
+	}
 
 	return nil
 }
@@ -392,11 +400,21 @@ func ripTitles(
 
 		tracker.applyChange(title.Index, title.DiscId, func(status *titleStatus) {
 			status.Ripping = InProgress
-			status.RippingProgress = 0
+			status.RippingProgress = -1
 			status.OutputFilePath = mkvOutputPath
 		})
 
-		ripErr := mkv.ripTitle(ctx, &title, mkvOutputDirectory)
+		ripErr := mkv.ripTitle(ctx, &title, mkvOutputDirectory, func(percent int, stage string) {
+			tracker.applyChange(title.Index, title.DiscId, func(status *titleStatus) {
+				if stage != "" {
+					status.RippingStage = stage
+				}
+				if percent >= 0 {
+					status.RippingHasLiveProgress = true
+					status.RippingProgress = percent
+				}
+			})
+		})
 
 		// Stop the poller regardless of success or failure
 		stopPoller()
@@ -497,4 +515,47 @@ func Setup(hb *HandBrakeCLI) error {
 	fmt.Printf("\nConfig file creation complete.\n\n")
 
 	return nil
+}
+
+// applyTitleSelection filters titles based on user input.
+// Empty input or "longest" selects the longest title. "all" keeps every title.
+func applyTitleSelection(titles []TitleInfo, raw string) ([]TitleInfo, error) {
+	raw = strings.ReplaceAll(raw, " ", "")
+	raw = strings.Trim(raw, ",")
+	raw = strings.ReplaceAll(raw, "(", "")
+	raw = strings.ReplaceAll(raw, ")", "")
+
+	if raw == "" || strings.EqualFold(raw, "longest") {
+		idx := findLongestTitle(titles)
+		if idx < 0 {
+			return nil, fmt.Errorf("No selected titles detected.")
+		}
+		return []TitleInfo{titles[idx]}, nil
+	}
+
+	if strings.EqualFold(raw, "all") {
+		return titles, nil
+	}
+
+	rawIds := strings.Split(raw, ",")
+	selectedIds := make([]int, 0, len(rawIds))
+	for _, idStr := range rawIds {
+		if idStr == "" {
+			continue
+		}
+		id, err := strconv.Atoi(idStr)
+		if err != nil {
+			return nil, fmt.Errorf("Invalid title selection input detected.")
+		}
+		selectedIds = append(selectedIds, id)
+	}
+
+	if len(selectedIds) < 1 {
+		return nil, fmt.Errorf("No selected titles detected.")
+	}
+
+	filtered := slices.DeleteFunc(slices.Clone(titles), func(x TitleInfo) bool {
+		return !slices.Contains(selectedIds, x.Index)
+	})
+	return filtered, nil
 }

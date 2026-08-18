@@ -3,6 +3,8 @@ package hmkv
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +23,8 @@ type progressTracker struct {
 }
 
 type statusValue uint8
+
+var etaPattern = regexp.MustCompile(`(?i)(\d+)h(\d+)m(\d+)s`)
 
 const (
 	Pending statusValue = iota
@@ -58,6 +62,14 @@ type titleStatus struct {
 	RippingProgress int
 	// Progress percentage for encoding (0-100, -1 for unknown).
 	EncodingProgress int
+	// Current ripping stage from MakeMKV (e.g. "Saving to MKV file").
+	RippingStage string
+	// Current encoding stage from HandBrake (e.g. "Scanning").
+	EncodingStage string
+	// Compact encoding ETA from HandBrake (e.g. "1h12m").
+	EncodingETA string
+	// True once MakeMKV PRGV progress has been seen; disables file-size fallback.
+	RippingHasLiveProgress bool
 	// Expected file size in bytes for ripping.
 	ExpectedSizeBytes int64
 	// Output file path being written (for polling).
@@ -125,11 +137,15 @@ func (pt *progressTracker) refreshDisplay() {
 			status.Ripping,
 			status.RippingProgress,
 			pt.animationFrame,
+			status.RippingStage,
+			"",
 		)
 		encodingStr := formatProgressStatus(
 			status.Encoding,
 			status.EncodingProgress,
 			pt.animationFrame,
+			status.EncodingStage,
+			status.EncodingETA,
 		)
 		rippingCol, _ := padString(rippingStr, 20)
 		encodingCol, _ := padString(encodingStr, 20)
@@ -149,7 +165,7 @@ func (pt *progressTracker) refreshDisplay() {
 
 // formatProgressStatus returns a colored status string with percentage and
 // animation for in-progress items.
-func formatProgressStatus(status statusValue, progress int, animFrame int) string {
+func formatProgressStatus(status statusValue, progress int, animFrame int, stage, eta string) string {
 	color := getColor(status)
 
 	switch status {
@@ -157,16 +173,76 @@ func formatProgressStatus(status statusValue, progress int, animFrame int) strin
 		return colorize(status, color)
 	case InProgress:
 		ellipsis := getAnimatedEllipsis(animFrame)
-		if progress < 0 {
-			// Unknown progress, show animation only
+		stage = shortStage(stage)
+		switch {
+		case progress >= 0 && eta != "":
+			return fmt.Sprintf("%s%d%% %s%s", color, progress, eta, colorReset)
+		case progress >= 0 && stage != "":
+			return fmt.Sprintf("%s%s %d%%%s", color, stage, progress, colorReset)
+		case progress < 0 && stage != "":
+			return fmt.Sprintf("%s%s%s%s", color, stage, ellipsis, colorReset)
+		case progress < 0:
 			return fmt.Sprintf("%sWorking%s%s", color, ellipsis, colorReset)
+		default:
+			return fmt.Sprintf("%s%d%%%s%s", color, progress, ellipsis, colorReset)
 		}
-		return fmt.Sprintf("%s%d%%%s%s", color, progress, ellipsis, colorReset)
 	case Complete:
 		return colorize(status, color)
 	default:
 		return colorize(status, color)
 	}
+}
+
+// shortStage returns the first word of a MakeMKV/HandBrake stage name so it
+// fits in the progress table column (e.g. "Saving to MKV file" → "Saving").
+func shortStage(stage string) string {
+	stage = strings.TrimSpace(stage)
+	if stage == "" {
+		return ""
+	}
+	if i := strings.IndexAny(stage, " \t"); i > 0 {
+		return stage[:i]
+	}
+	return stage
+}
+
+// compactETA turns HandBrake's "01h12m34s" into a shorter form like "1h12m".
+func compactETA(raw string) string {
+	raw = strings.TrimSpace(raw)
+	m := etaPattern.FindStringSubmatch(raw)
+	if m == nil {
+		return raw
+	}
+
+	h, _ := strconv.Atoi(m[1])
+	min, _ := strconv.Atoi(m[2])
+	sec, _ := strconv.Atoi(m[3])
+
+	switch {
+	case h > 0:
+		return fmt.Sprintf("%dh%02dm", h, min)
+	case min > 0:
+		return fmt.Sprintf("%dm%02ds", min, sec)
+	default:
+		return fmt.Sprintf("%ds", sec)
+	}
+}
+
+// splitProgressLines yields a token at each \r or \n so in-place progress
+// updates (HandBrake) and robot lines (MakeMKV) are seen immediately.
+func splitProgressLines(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	for i, b := range data {
+		if b == '\r' || b == '\n' {
+			return i + 1, data[0:i], nil
+		}
+	}
+	if atEOF {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
 }
 
 // getAnimatedEllipsis returns ".", "..", or "..." based on the frame.
@@ -267,6 +343,9 @@ func (pt *progressTracker) updateProgressFromFile(
 	}
 
 	pt.applyChange(titleIndex, discId, func(status *titleStatus) {
+		if status.RippingHasLiveProgress {
+			return
+		}
 		status.RippingProgress = percentage
 	})
 }
