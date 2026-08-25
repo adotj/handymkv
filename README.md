@@ -16,6 +16,7 @@ As I developed HandyMKV, I found that I was able to add features that I found us
 
 - Rip titles from discs using MakeMKV
 - Encode video files using HandBrake
+- Movie and TV season library organization (Jellyfin-style)
 - Flexible configuration options
 - Clear and concise progress display
 - Concurrency to reduce overall processing time
@@ -23,6 +24,7 @@ As I developed HandyMKV, I found that I was able to add features that I found us
 - Automated cleanup of raw unencoded files
 - Run history — browse and inspect past ripping/encoding sessions
 - Automations — run custom scripts after encoding with parameters sourced from run data, environment variables, or user prompts
+- ntfy notifications — push alerts to your phone when a rip finishes or fails (via [ntfy.sh](https://ntfy.sh))
 - Parsing of `HandBrakeCLI` and `makemkvcon` output to provide a more user-friendly experience
 
 ## Objectives
@@ -84,6 +86,18 @@ Usage of handymkv:
         Example: -a move-to-plex,notify-discord
   -d string
         Discs. A comma delimited list of disc indexes to rip. Example: -d 0,1,2 (default "0")
+  -e int
+        Starting episode number for TV mode (default 1).
+  -n string
+        Movie/series name. Jellyfin-style name with year, e.g. "The Shining (1980)" or "Star Trek (1966)", or name only with -y.
+  -S int
+        Season number for TV mode (0 = specials). Required for unattended TV rips.
+  -t string
+        Title selection. Use 'longest', 'all', or comma-separated title IDs to skip the prompt.
+  -tv
+        TV mode. Rip selected titles as sequential episodes into Jellyfin TV season folders.
+  -y string
+        Release year. Four digits, e.g. 1980. Skips year prompts.
   -v    Version. Prints the version of the application.
 
 Subcommands:
@@ -254,6 +268,101 @@ A custom directory can be set during the configuration wizard (`handymkv config 
 ### Disabling Run History
 
 Run history can be disabled entirely via the configuration wizard or by setting `"disable_manifests": true` in `config.json`. When disabled, `handymkv history` and `handymkv history clear` will display an informational message rather than attempting to read or modify manifest files.
+
+## Notifications (ntfy)
+
+HandyMKV can send push notifications to your phone when a rip finishes or fails. This uses [ntfy.sh](https://ntfy.sh), a free pub-sub notification service.
+
+### iPhone setup (one time)
+
+1. Install the **ntfy** app from the App Store.
+2. Tap **+** → **Subscribe to topic**.
+3. Enter a **private, unguessable topic name** (e.g. `handymkv-yourname-x7k2m9`). Topics are public unless you configure ntfy authentication, so avoid generic names like `handymkv`.
+4. Leave the default server as `https://ntfy.sh`.
+
+### Server setup
+
+Set your topic in the config file. The setup wizard will ask for it, or add it manually:
+
+```json
+{
+  "mkv_output_directory": "D:\\handymkv\\mkvoutput",
+  "library_root": "D:\\movies",
+  "tv_library_root": "D:\\tv",
+  "ntfy_topic": "handymkv-yourname-x7k2m9",
+  "ntfy_server": "https://ntfy.sh"
+}
+```
+
+- `ntfy_topic` — required to enable notifications. Leave blank or omit to disable.
+- `ntfy_server` — optional. Defaults to `https://ntfy.sh`. Change only if you self-host ntfy.
+- `library_root` — Jellyfin movie library root (default `D:\movies` on Windows).
+- `tv_library_root` — Jellyfin TV shows library root (default `D:\tv` on Windows).
+
+Test from your server (PowerShell):
+
+```powershell
+Invoke-RestMethod -Uri "https://ntfy.sh/your-topic" -Method Post -Body "test" -Headers @{ Title = "HandyMKV test" }
+```
+
+You should receive the notification on your phone immediately.
+
+### What gets sent
+
+| Event | Notification title | When |
+|-------|-------------------|------|
+| Success | `HandyMKV — Ready for next disc` | After rip, encode, and library organization complete |
+| Failure | `HandyMKV — Action needed` | If ripping, encoding, or library organization fails |
+
+The success message includes the movie or series name, elapsed time, and number of titles encoded.
+
+### Unattended rips (important)
+
+Notifications only fire when the pipeline **completes or fails**. If HandyMKV is waiting for interactive input, no notification is sent. For hands-off rips on a headless server, pass flags that skip all prompts:
+
+```powershell
+handymkv -t longest -n "The Matrix (1999)"
+```
+
+Or provide the name and year separately:
+
+```powershell
+handymkv -t longest -n "The Matrix" -y 1999
+```
+
+- `-t longest` — auto-select the longest title (skip title prompt)
+- `-n` / `-y` — skip movie naming prompts during library organization
+
+### TV season discs
+
+For DVDs where each episode is a separate MakeMKV title, use `-tv`. Episodes are numbered sequentially and organized like:
+
+```text
+D:\tv\Star Trek (1966)\Season 01\Star Trek (1966) - S01E01.mkv
+```
+
+Interactive:
+
+```powershell
+handymkv -tv
+```
+
+Unattended (first disc of a season):
+
+```powershell
+handymkv -tv -t all -n "Star Trek (1966)" -S 1 -e 1
+```
+
+Continue numbering on the next disc:
+
+```powershell
+handymkv -tv -t all -n "Star Trek (1966)" -S 1 -e 5
+```
+
+- `-tv` — TV mode (Jellyfin season folders under `tv_library_root`)
+- `-t all` or `-t 0,1,2` — select episode titles without prompting
+- `-S` / `-e` — season and starting episode number
+- `-n` / `-y` — series name (and optional year)
 
 ## Automations
 

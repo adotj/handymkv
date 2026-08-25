@@ -4,58 +4,26 @@ import "testing"
 
 func TestGetEncodingFileName(t *testing.T) {
 	tests := []struct {
-		name             string
-		fileName         string
-		outputFileFormat string
-		want             string
+		name     string
+		fileName string
+		want     string
 	}{
 		{
-			name:             "no format set keeps mkv",
-			fileName:         "movie.mkv",
-			outputFileFormat: "",
-			want:             "movie.mkv",
+			name:     "keeps mkv extension",
+			fileName: "movie.mkv",
+			want:     "movie.mkv",
 		},
 		{
-			name:             "format=mkv keeps mkv",
-			fileName:         "movie.mkv",
-			outputFileFormat: "mkv",
-			want:             "movie.mkv",
-		},
-		{
-			name:             "format=mp4 replaces extension",
-			fileName:         "movie.mkv",
-			outputFileFormat: "mp4",
-			want:             "movie.mp4",
-		},
-		{
-			name:             "format=webm replaces extension",
-			fileName:         "movie.mkv",
-			outputFileFormat: "webm",
-			want:             "movie.webm",
-		},
-		{
-			name:             "spaces replaced with underscores",
-			fileName:         "Star Trek TNG.mkv",
-			outputFileFormat: "",
-			want:             "Star_Trek_TNG.mkv",
-		},
-		{
-			name:             "spaces replaced and extension changed",
-			fileName:         "Star Trek TNG.mkv",
-			outputFileFormat: "mp4",
-			want:             "Star_Trek_TNG.mp4",
+			name:     "spaces replaced with underscores",
+			fileName: "Star Trek TNG.mkv",
+			want:     "Star_Trek_TNG.mkv",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			title := &TitleInfo{FileName: tt.fileName}
-			config := &handyMKVConfig{
-				EncodeConfig: EncodingParams{
-					OutputFileFormat: tt.outputFileFormat,
-				},
-			}
-			got := title.GetEncodingFileName(config)
+			got := title.GetEncodingFileName()
 			if got != tt.want {
 				t.Errorf("GetEncodingFileName() = %q, want %q", got, tt.want)
 			}

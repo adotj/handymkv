@@ -55,14 +55,7 @@ func main() {
 		}
 
 		if len(os.Args) > 2 && os.Args[2] == "setup" {
-			_, hb, err := checkForPrerequisites()
-			if err != nil {
-				outputFailedPrerequisiteCheck(err)
-				fmt.Print("Please run the configuration wizard again after addressing prerequisite dependency issues.\n\n")
-				fmt.Printf("Exiting.\n\n")
-				return
-			}
-			if err := hmkv.Setup(hb); err != nil {
+			if err := hmkv.Setup(); err != nil {
 				fmt.Printf("An error occurred during the setup process.\nError: %v\n", err)
 			}
 			return
@@ -155,22 +148,6 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "history" {
 		hmkv.PrintLogo()
 
-		cfg, cfgErr := hmkv.ReadConfig()
-		if cfgErr == hmkv.ErrConfigNotFound {
-			fmt.Println("No configuration found. Please run the configuration wizard with 'handymkv config setup'.")
-			fmt.Println()
-			return
-		}
-		if cfgErr != nil {
-			fmt.Printf("An error occurred reading the configuration file: %v\n\n", cfgErr)
-			return
-		}
-		if cfg.DisableManifests {
-			fmt.Println("Run history is disabled in your configuration.")
-			fmt.Println()
-			return
-		}
-
 		if len(os.Args) > 2 && os.Args[2] == "clear" {
 			if err := hmkv.ClearHistory(); err != nil {
 				fmt.Printf("An error occurred clearing run history: %v\n\n", err)
@@ -193,14 +170,25 @@ func main() {
 	var automationNames string
 	var titleMode string
 	var movieName string
+	var movieYear string
+	var tvMode bool
+	var season int
+	var startEpisode int
 	var version bool
 
 	flag.BoolVar(&version, "v", false, "Version. Prints the version of the application.")
 	flag.StringVar(&discIds, "d", "0", "Discs. A comma delimited list of disc indexes to rip. Example: -d 0,1,2")
 	flag.StringVar(&automationNames, "a", "", "Automations. A comma delimited list of automation names to run after encoding. Example: -a move-to-plex,notify-discord")
-	flag.StringVar(&titleMode, "t", "", "Title selection. Use 'longest' to auto-select the longest title and skip the prompt.")
-	flag.StringVar(&titleMode, "title", "", "Title selection. Same as -t. Use 'longest' to skip the prompt and rip the longest title.")
-	flag.StringVar(&movieName, "n", "", "Movie name. Jellyfin-style name with year, e.g. \"The Shining (1980)\". Skips naming prompts.")
+	flag.StringVar(&titleMode, "t", "", "Title selection. Use 'longest', 'all', or comma-separated title IDs to skip the prompt.")
+	flag.StringVar(&titleMode, "title", "", "Title selection. Same as -t.")
+	flag.StringVar(&movieName, "n", "", "Movie/series name. Jellyfin-style name with year, e.g. \"The Shining (1980)\" or \"Star Trek (1966)\", or name only with -y.")
+	flag.StringVar(&movieYear, "y", "", "Release year. Four digits, e.g. 1980. Skips year prompts.")
+	flag.StringVar(&movieYear, "year", "", "Release year. Same as -y.")
+	flag.BoolVar(&tvMode, "tv", false, "TV mode. Rip selected titles as sequential episodes into Jellyfin TV season folders.")
+	flag.IntVar(&season, "S", -1, "Season number for TV mode (0 = specials). Required for unattended TV rips.")
+	flag.IntVar(&season, "season", -1, "Season number for TV mode. Same as -S.")
+	flag.IntVar(&startEpisode, "e", 1, "Starting episode number for TV mode (default 1).")
+	flag.IntVar(&startEpisode, "episode", 1, "Starting episode number for TV mode. Same as -e.")
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
@@ -263,9 +251,22 @@ func main() {
 	slices.Sort(discIdInts)
 
 	titleMode = strings.TrimSpace(titleMode)
-	if titleMode != "" && !strings.EqualFold(titleMode, "longest") {
-		fmt.Printf("Invalid title selection value %q. Use -t longest.\n\n", titleMode)
+	if err := hmkv.ValidateTitleMode(titleMode); err != nil {
+		fmt.Printf("Invalid title selection value %q. %v\n\n", titleMode, err)
 		return
+	}
+
+	if tvMode {
+		if season >= 0 {
+			if err := hmkv.ValidateSeason(season); err != nil {
+				fmt.Printf("Invalid season %d: %v\n\n", season, err)
+				return
+			}
+		}
+		if err := hmkv.ValidateStartEpisode(startEpisode); err != nil {
+			fmt.Printf("Invalid starting episode %d: %v\n\n", startEpisode, err)
+			return
+		}
 	}
 
 	var autoNames []string
@@ -282,10 +283,37 @@ func main() {
 		}
 	}
 
-	err = hmkv.Exec(mkv, hb, discIdInts, getVersion(), autoNames, titleMode, strings.TrimSpace(movieName))
+	movieName = strings.TrimSpace(movieName)
+	movieYear = strings.TrimSpace(movieYear)
+
+	if movieYear != "" {
+		if err := hmkv.ValidateMovieYear(movieYear); err != nil {
+			fmt.Printf("Invalid release year %q: %v\n\n", movieYear, err)
+			return
+		}
+	}
+
+	if movieName != "" {
+		if _, year, ok := hmkv.ParseMovieNameYear(movieName); ok && movieYear != "" && movieYear != year {
+			fmt.Printf("Conflicting year: -n specifies %s but -y specifies %s\n\n", year, movieYear)
+			return
+		}
+	}
+
+	err = hmkv.Exec(mkv, hb, hmkv.ExecOptions{
+		DiscIds:         discIdInts,
+		AppVersion:      getVersion(),
+		AutomationNames: autoNames,
+		TitleMode:       titleMode,
+		MediaName:       movieName,
+		MediaYear:       movieYear,
+		TVMode:          tvMode,
+		Season:          season,
+		StartEpisode:    startEpisode,
+	})
 	if err != nil {
 		if err == hmkv.ErrConfigNotFound {
-			fmt.Printf("Config file not found. Please run the configuration wizard with 'handymkv -c'.\n\n")
+			fmt.Printf("Config file not found. Please run 'handymkv config setup'.\n\n")
 			return
 		} else if discErr, ok := err.(*hmkv.DiscError); ok {
 			fmt.Printf("An error occurred while reading titles from disc %d. Please ensure the disc is inserted and try again.\n\n", discErr.DiscId)

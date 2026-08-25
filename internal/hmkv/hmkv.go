@@ -5,18 +5,36 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
+// ExecOptions controls a HandyMKV rip/encode run.
+type ExecOptions struct {
+	DiscIds         []int
+	AppVersion      string
+	AutomationNames []string
+	TitleMode       string
+	MediaName       string
+	MediaYear       string
+	TVMode          bool
+	Season          int // -1 means unset (prompt in TV mode)
+	StartEpisode    int
+}
+
 // Executes the main functionality of the program.
 // Reads the configuration file, reads titles from the disc, prompts the user for which titles they want to rip,
-// and processes the selected titles. titleMode may be "longest" to skip the prompt and auto-select
-// the longest title on each disc.
-func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, automationNames []string, titleMode string, movieName string) error {
+// and processes the selected titles. TitleMode may be "longest", "all", or comma-separated title IDs to skip the prompt.
+func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
+	if opts.StartEpisode < 1 {
+		opts.StartEpisode = 1
+	}
+	if opts.Season < -1 {
+		opts.Season = -1
+	}
+
 	config, err := ReadConfig()
 
 	if err != nil {
@@ -26,6 +44,12 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 
 		return fmt.Errorf("an unexpected error occurred while reading the configuration file: %w", err)
 	}
+
+	defer func() {
+		if execErr != nil {
+			notifyRipFailure(config, execErr)
+		}
+	}()
 
 	// Make sure the output directories exist
 	err = os.MkdirAll(config.MKVOutputDirectory, 0740)
@@ -42,7 +66,7 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 
 	processTitles := make([]TitleInfo, 0)
 
-	for i, discId := range discIds {
+	for i, discId := range opts.DiscIds {
 
 		fmt.Printf("Reading titles from disc %d...\n\n", discId)
 
@@ -60,14 +84,29 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 			if i == longestIdx {
 				marker = " (longest)"
 			}
-			fmt.Printf("ID: %d, Title Name: %s, Size: %s, Length: %s%s\n", title.Index, title.FileName, title.FileSizeDesc, title.Length, marker)
+			if opts.TVMode && title.Chapters > 0 {
+				fmt.Printf("ID: %d, Title Name: %s, Size: %s, Length: %s, Chapters: %d%s\n", title.Index, title.FileName, title.FileSizeDesc, title.Length, title.Chapters, marker)
+			} else {
+				fmt.Printf("ID: %d, Title Name: %s, Size: %s, Length: %s%s\n", title.Index, title.FileName, title.FileSizeDesc, title.Length, marker)
+			}
 		}
 
 		var titleSelections string
-		if strings.EqualFold(titleMode, "longest") {
-			titleSelections = "longest"
-			if longestIdx >= 0 {
+		if strings.TrimSpace(opts.TitleMode) != "" {
+			titleSelections = opts.TitleMode
+			if strings.EqualFold(opts.TitleMode, "longest") && longestIdx >= 0 {
 				fmt.Printf("\nAuto-selected longest title: ID %d (%s, %s)\n", titles[longestIdx].Index, titles[longestIdx].FileName, titles[longestIdx].Length)
+			} else if strings.EqualFold(opts.TitleMode, "all") {
+				fmt.Printf("\nAuto-selected all %d titles\n", len(titles))
+			} else {
+				fmt.Printf("\nAuto-selected titles: %s\n", opts.TitleMode)
+			}
+		} else if opts.TVMode {
+			fmt.Print("\nEnter title IDs (0,1,2...), 'all', or 'longest':\n\n")
+			titleSelections = readLine()
+			if strings.TrimSpace(titleSelections) == "" {
+				fmt.Printf("\nNo title selection provided. Exiting.\n\n")
+				return nil
 			}
 		} else {
 			fmt.Print("\nEnter the IDs of the titles to process (0,1,2...) or 'all'. Press Enter to select the longest title: \n\n")
@@ -79,7 +118,7 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 			fmt.Printf("\n%s\n\n", selErr.Error())
 			return nil
 		}
-		if !strings.EqualFold(titleMode, "longest") && strings.TrimSpace(titleSelections) == "" && len(selected) == 1 {
+		if !opts.TVMode && strings.TrimSpace(opts.TitleMode) == "" && strings.TrimSpace(titleSelections) == "" && len(selected) == 1 {
 			fmt.Printf("Selected longest title: ID %d (%s)\n", selected[0].Index, selected[0].FileName)
 		}
 
@@ -87,7 +126,7 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 
 		processTitles = append(processTitles, titles...)
 
-		if i < len(discIds)-1 {
+		if i < len(opts.DiscIds)-1 {
 			fmt.Println()
 		}
 	}
@@ -95,6 +134,21 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 	if len(processTitles) < 1 {
 		fmt.Printf("\nNo titles to process. Exiting.\n\n")
 		return nil
+	}
+
+	var tvMeta *tvSeriesMeta
+	if opts.TVMode {
+		applyLibraryConfigDefaults(config)
+		var tvErr error
+		tvMeta, tvErr = resolveTVSeriesMeta(processTitles, opts, config.TVLibraryRoot)
+		if tvErr != nil {
+			return tvErr
+		}
+		// Keep resolved values for notifications after encode.
+		opts.Season = tvMeta.Season
+		opts.StartEpisode = tvMeta.StartEpisode
+		opts.MediaName = tvMeta.Series
+		opts.MediaYear = tvMeta.Year
 	}
 
 	// If there any titles that have an identical disc title to another disc, set prependDiscToSub to true for those titles
@@ -152,7 +206,7 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 	var selectedAutomations []Automation
 	var preRunParams map[string]string
 
-	for _, name := range automationNames {
+	for _, name := range opts.AutomationNames {
 		a, err := LoadAutomation(name)
 		if err != nil {
 			fmt.Printf("Warning: could not load automation '%s': %v\n", name, err)
@@ -177,6 +231,7 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 	var manifestEntries []EncodingParams
 
 	processStartTime := time.Now()
+	tracker.processStartTime = processStartTime
 
 	// Start central refresh ticker for display updates
 	stopRefreshTicker := tracker.startRefreshTicker(ctx)
@@ -191,7 +246,7 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 
 		var rippingWaitGroup sync.WaitGroup
 
-		for _, discId := range discIds {
+		for _, discId := range opts.DiscIds {
 			var discTitles []TitleInfo
 
 			for _, title := range processTitles {
@@ -260,6 +315,7 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 					})
 				}
 
+				encodeStart := time.Now()
 				encErr := hb.encode(ctx, &params, hbProgressUpdate)
 
 				if encErr != nil {
@@ -278,6 +334,10 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 				if stat, err := os.Stat(params.HandBrakeOutputPath); err == nil {
 					params.EncodedFileSizeBytes = stat.Size()
 				}
+
+				ripDuration, _ := time.ParseDuration(params.RippingDuration)
+				params.ProcessingDuration = ripDuration + time.Since(encodeStart).Round(time.Second)
+				params.CompletedAt = time.Now().UTC()
 
 				manifestMu.Lock()
 				manifestEntries = append(manifestEntries, params)
@@ -315,9 +375,15 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 		fmt.Printf("Total disk space saved via encoding - %s\n", formatSavedSpace(totalSizeRaw-totalSizeEncoded))
 	}
 
-	libraryPaths, err := organizeEncodedFilesToLibrary(manifestEntries, processTitles, config, movieName)
+	libraryPaths, err := organizeEncodedFilesToLibrary(manifestEntries, processTitles, config, opts, tvMeta)
 	if err != nil {
 		return fmt.Errorf("library organization failed: %w", err)
+	}
+
+	if err := appendRipHistory(manifestEntries, processTitles, libraryPaths); err != nil {
+		fmt.Printf("Warning: could not log rip stats: %v\n", err)
+	} else {
+		printCatalogSummary()
 	}
 
 	// Run automations before raw file deletion so scripts can access raw MKV files
@@ -328,38 +394,29 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, discIds []int, appVersion string, auto
 			config.MKVOutputDirectory,
 			processDuration,
 			len(processTitles),
-			config.DeleteRawMKVFiles,
+			true,
 			totalSizeRaw,
 			totalSizeEncoded,
 		)
 		automationEntries = RunAutomations(selectedAutomations, preRunParams, outputData)
 	}
 
-	// Write run manifest (after automations so it can record automation data)
-	if !config.DisableManifests {
-		manifestDir := config.ManifestDirectory
-		if manifestDir == "" {
-			var mdErr error
-			manifestDir, mdErr = getManifestDir()
-			if mdErr != nil {
-				fmt.Printf("Warning: could not determine manifest directory: %v\n", mdErr)
-				manifestDir = ""
-			}
-		}
-		if manifestDir != "" {
-			m := buildManifest(processTitles, manifestEntries, processStartTime, processDuration, config.DeleteRawMKVFiles, appVersion, automationEntries)
-			manifestPath, wErr := writeManifest(manifestDir, processStartTime, m)
-			if wErr != nil {
-				fmt.Printf("Warning: could not write manifest: %v\n", wErr)
-			} else {
-				fmt.Printf("Manifest written to: %s\n", manifestPath)
-			}
+	manifestDir, mdErr := getManifestDir()
+	if mdErr != nil {
+		fmt.Printf("Warning: could not determine manifest directory: %v\n", mdErr)
+	} else {
+		m := buildManifest(processTitles, manifestEntries, processStartTime, processDuration, true, opts.AppVersion, automationEntries)
+		manifestPath, wErr := writeManifest(manifestDir, processStartTime, m)
+		if wErr != nil {
+			fmt.Printf("Warning: could not write manifest: %v\n", wErr)
+		} else {
+			fmt.Printf("Manifest written to: %s\n", manifestPath)
 		}
 	}
 
-	if config.DeleteRawMKVFiles {
-		deleteRawFiles(config)
-	}
+	notifyRipSuccess(config, libraryPaths, processTitles, opts, tvMeta, processDuration)
+
+	deleteRawFiles(config)
 
 	if len(libraryPaths) > 0 {
 		fmt.Printf("\nOrganized library files:\n")
@@ -438,32 +495,24 @@ func ripTitles(
 			rippedSizeBytes = stat.Size()
 		}
 
-		// Replace spaces with underscores for encoding run.
-		encodingOutputFileName := title.GetEncodingFileName(config)
+		encodingOutputFileName := title.GetEncodingFileName()
 
 		hbOutputDir := filepath.Join(config.HBOutputDirectory, title.Subdirectory())
 
-		encChannel <- EncodingParams{
-			TitleIndex:          title.Index,
-			DiscId:              title.DiscId,
-			MKVOutputPath:       mkvOutputPath,
-			HandBrakeOutputPath: filepath.Join(hbOutputDir, encodingOutputFileName),
-			RippedFileSizeBytes: rippedSizeBytes,
-			RippingDuration:     ripDuration.String(),
-			Quality:             config.EncodeConfig.Quality,
-			Encoder:             config.EncodeConfig.Encoder,
-			EncoderPreset:       config.EncodeConfig.EncoderPreset,
-			OutputFileFormat:    config.EncodeConfig.OutputFileFormat,
-			Preset:              config.EncodeConfig.Preset,
-			PresetFile:          config.EncodeConfig.PresetFile,
-			SubtitleLanguages:   config.EncodeConfig.SubtitleLanguages,
-			AudioLanguages:      config.EncodeConfig.AudioLanguages,
-		}
+		enc := defaultEncodingParams()
+		enc.TitleIndex = title.Index
+		enc.DiscId = title.DiscId
+		enc.MKVOutputPath = mkvOutputPath
+		enc.HandBrakeOutputPath = filepath.Join(hbOutputDir, encodingOutputFileName)
+		enc.RippedFileSizeBytes = rippedSizeBytes
+		enc.RippingDuration = ripDuration.String()
+
+		encChannel <- enc
 	}
 }
 
 // Prompts the user to create a configuration file.
-func Setup(hb *HandBrakeCLI) error {
+func Setup() error {
 	fmt.Printf("What level of configuration would you like to create?\n\n")
 	fmt.Println("1 - User-wide configuration (recommended).")
 	fmt.Println("2 - Current working directory.")
@@ -488,7 +537,7 @@ func Setup(hb *HandBrakeCLI) error {
 	var config *handyMKVConfig
 
 	for {
-		config, err = promptForConfig(hb, configLocationSelection)
+		config, err = promptForConfig(configLocationSelection)
 
 		if err != nil {
 			fmt.Printf("An error occurred while prompting for configuration values: %v\n", err)
@@ -519,6 +568,7 @@ func Setup(hb *HandBrakeCLI) error {
 
 // applyTitleSelection filters titles based on user input.
 // Empty input or "longest" selects the longest title. "all" keeps every title.
+// Comma-separated IDs are returned in the order the user specified.
 func applyTitleSelection(titles []TitleInfo, raw string) ([]TitleInfo, error) {
 	raw = strings.ReplaceAll(raw, " ", "")
 	raw = strings.Trim(raw, ",")
@@ -554,8 +604,27 @@ func applyTitleSelection(titles []TitleInfo, raw string) ([]TitleInfo, error) {
 		return nil, fmt.Errorf("No selected titles detected.")
 	}
 
-	filtered := slices.DeleteFunc(slices.Clone(titles), func(x TitleInfo) bool {
-		return !slices.Contains(selectedIds, x.Index)
-	})
+	titleByIndex := make(map[int]TitleInfo, len(titles))
+	for _, title := range titles {
+		titleByIndex[title.Index] = title
+	}
+
+	filtered := make([]TitleInfo, 0, len(selectedIds))
+	seen := make(map[int]struct{}, len(selectedIds))
+	for _, id := range selectedIds {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		title, ok := titleByIndex[id]
+		if !ok {
+			continue
+		}
+		filtered = append(filtered, title)
+		seen[id] = struct{}{}
+	}
+
+	if len(filtered) < 1 {
+		return nil, fmt.Errorf("No selected titles detected.")
+	}
 	return filtered, nil
 }

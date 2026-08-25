@@ -8,7 +8,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 )
 
@@ -19,7 +18,8 @@ const (
 )
 
 const (
-	configFileName = "config.json"
+	configFileName    = "config.json"
+	defaultNtfyServer = "https://ntfy.sh"
 )
 
 var ErrConfigNotFound = errors.New("config file not found")
@@ -27,70 +27,61 @@ var ErrConfigNotFound = errors.New("config file not found")
 type configFileLocation int
 
 type handyMKVConfig struct {
-	EncodeConfig       EncodingParams `json:"encoding_params"`
-	MKVOutputDirectory string         `json:"mkv_output_directory"`
-	HBOutputDirectory  string         `json:"handbrake_output_directory"`
-	DeleteRawMKVFiles  bool           `json:"delete_raw_mkv_files"`
-	OrganizeToLibrary  bool           `json:"organize_to_library"`
-	LibraryRoot        string         `json:"library_root,omitempty"`
-	DisableManifests   bool           `json:"disable_manifests,omitempty"`
-	ManifestDirectory  string         `json:"manifest_directory,omitempty"`
+	MKVOutputDirectory string `json:"mkv_output_directory"`
+	HBOutputDirectory  string `json:"handbrake_output_directory,omitempty"`
+	LibraryRoot        string `json:"library_root,omitempty"`
+	TVLibraryRoot      string `json:"tv_library_root,omitempty"`
+	NtfyTopic          string `json:"ntfy_topic,omitempty"`
+	NtfyServer         string `json:"ntfy_server,omitempty"`
 }
 
 func (config *handyMKVConfig) String() string {
+	applyConfigDefaults(config)
+
 	var sb strings.Builder
 
-	sb.WriteString("Encode Settings\n\n")
+	sb.WriteString("Encode Settings (fixed)\n\n")
+	enc := defaultEncodingParams()
+	fmt.Fprintf(&sb, "Encoder: %s\n", enc.Encoder)
+	fmt.Fprintf(&sb, "Encoder Preset: %s\n", enc.EncoderPreset)
+	fmt.Fprintf(&sb, "Quality (CRF): %d\n", enc.Quality)
+	fmt.Fprintf(&sb, "Audio Languages: %s (first track only)\n", strings.Join(enc.AudioLanguages, ", "))
+	fmt.Fprintf(&sb, "Subtitle Languages: %s (first track only)\n", strings.Join(enc.SubtitleLanguages, ", "))
+	fmt.Fprintf(&sb, "Output Format: mkv\n")
 
-	if config.EncodeConfig.Preset == "" && config.EncodeConfig.PresetFile == "" {
-		fmt.Fprintf(&sb, "Encoder: %s\n", config.EncodeConfig.Encoder)
-
-		if config.EncodeConfig.EncoderPreset != "" {
-			fmt.Fprintf(&sb, "Encoder Preset: %s\n", config.EncodeConfig.EncoderPreset)
-		} else {
-			fmt.Fprintf(&sb, "Quality: %d\n", config.EncodeConfig.Quality)
-		}
-
-		fmt.Fprintf(&sb, "Audio Languages: %s\n", strings.Join(config.EncodeConfig.AudioLanguages, ", "))
-		fmt.Fprintf(&sb, "Include All Relevant Audio: %t\n", config.EncodeConfig.IncludeAllRelevantAudio)
-		fmt.Fprintf(&sb, "Subtitle Languages: %s\n", strings.Join(config.EncodeConfig.SubtitleLanguages, ", "))
-		fmt.Fprintf(&sb, "Include All Relevant Subtitles: %t\n", config.EncodeConfig.IncludeAllRelevantSubtitles)
-		fmt.Fprintf(&sb, "Output File Format: %s\n", config.EncodeConfig.OutputFileFormat)
-	} else {
-		if config.EncodeConfig.PresetFile != "" {
-			fmt.Fprintf(&sb, "Preset File: %s\n", config.EncodeConfig.PresetFile)
-
-			if config.EncodeConfig.Preset != "" {
-				fmt.Fprintf(&sb, "Custom HandBrake Preset: %s\n", config.EncodeConfig.Preset)
-			}
-
-			if config.EncodeConfig.OutputFileFormat != "" {
-				fmt.Fprintf(&sb, "Output File Format: %s\n", config.EncodeConfig.OutputFileFormat)
-			}
-		} else {
-			fmt.Fprintf(&sb, "HandBrake Preset: %s\n", config.EncodeConfig.Preset)
-		}
-	}
-
-	sb.WriteString("\n")
-	sb.WriteString("General Settings\n\n")
-	fmt.Fprintf(&sb, "MKV Output Directory: %s\n", config.MKVOutputDirectory)
+	sb.WriteString("\nDirectories\n\n")
+	fmt.Fprintf(&sb, "MKV Output Directory:      %s\n", config.MKVOutputDirectory)
 	fmt.Fprintf(&sb, "HandBrake Output Directory: %s\n", config.HBOutputDirectory)
-	fmt.Fprintf(&sb, "Automatically Delete Raw MKV Files: %t\n", config.DeleteRawMKVFiles)
-	fmt.Fprintf(&sb, "Organize Encoded Files To Library:  %t\n", config.OrganizeToLibrary)
-	if config.OrganizeToLibrary {
-		libraryRoot := config.LibraryRoot
-		if libraryRoot == "" {
-			libraryRoot = defaultLibraryRoot()
-		}
-		fmt.Fprintf(&sb, "Library Root:                       %s\n", libraryRoot)
-	}
-	fmt.Fprintf(&sb, "Disable Run History:                %t\n", config.DisableManifests)
-	if !config.DisableManifests && config.ManifestDirectory != "" {
-		fmt.Fprintf(&sb, "Manifest Directory:                 %s\n", config.ManifestDirectory)
+	fmt.Fprintf(&sb, "Movie Library Root:         %s\n", config.LibraryRoot)
+	fmt.Fprintf(&sb, "TV Library Root:            %s\n", config.TVLibraryRoot)
+
+	sb.WriteString("\nBehavior (fixed)\n\n")
+	sb.WriteString("Automatically delete raw MKV files: true\n")
+	sb.WriteString("Organize to Jellyfin library:       true\n")
+
+	if config.NtfyTopic != "" {
+		sb.WriteString("\nNotifications\n\n")
+		fmt.Fprintf(&sb, "ntfy topic:  %s\n", config.NtfyTopic)
+		fmt.Fprintf(&sb, "ntfy server: %s\n", config.NtfyServer)
 	}
 
 	return sb.String()
+}
+
+func applyConfigDefaults(config *handyMKVConfig) {
+	applyLibraryConfigDefaults(config)
+
+	if config.HBOutputDirectory == "" && config.MKVOutputDirectory != "" {
+		config.HBOutputDirectory = deriveHBOutputDirectory(config.MKVOutputDirectory)
+	}
+
+	if config.NtfyTopic != "" && config.NtfyServer == "" {
+		config.NtfyServer = defaultNtfyServer
+	}
+}
+
+func deriveHBOutputDirectory(mkvOutputDirectory string) string {
+	return filepath.Join(filepath.Dir(mkvOutputDirectory), "hboutput")
 }
 
 func getUserConfigPath() (string, error) {
@@ -100,13 +91,13 @@ func getUserConfigPath() (string, error) {
 			return "", fmt.Errorf("APPDATA environment variable is not set")
 		}
 		return filepath.Join(appData, "handymkv", configFileName), nil
-	} else {
-		usr, err := user.Current()
-		if err != nil {
-			return "", fmt.Errorf("error getting current user: %w", err)
-		}
-		return filepath.Join(usr.HomeDir, ".config", "handymkv", configFileName), nil
 	}
+
+	usr, err := user.Current()
+	if err != nil {
+		return "", fmt.Errorf("error getting current user: %w", err)
+	}
+	return filepath.Join(usr.HomeDir, ".config", "handymkv", configFileName), nil
 }
 
 // GetConfigFilePath returns the path of the active config file, using the same
@@ -126,17 +117,14 @@ func GetConfigFilePath() (string, error) {
 	return "", ErrConfigNotFound
 }
 
-// Reads the config file and returns a config struct.
+// ReadConfig reads the config file and returns a config struct.
 func ReadConfig() (*handyMKVConfig, error) {
-	// Check in the current working directory
 	filePath := fmt.Sprintf("./%s", configFileName)
 	if _, err := os.Stat(filePath); err == nil {
 		return readConfigFile(filePath)
 	}
 
-	// Check in the user configuration directory
 	userConfigPath, err := getUserConfigPath()
-
 	if err != nil {
 		return nil, err
 	}
@@ -148,99 +136,30 @@ func ReadConfig() (*handyMKVConfig, error) {
 	return nil, ErrConfigNotFound
 }
 
-// Helper function to read and unmarshal the config file
 func readConfigFile(filePath string) (*handyMKVConfig, error) {
 	fileData, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("error reading config file - %w", err)
 	}
 
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(fileData, &raw); err != nil {
-		return nil, fmt.Errorf("error parsing config file - %w", err)
-	}
-
 	var cfg handyMKVConfig
-
-	err = json.Unmarshal(fileData, &cfg)
-
-	if err != nil {
+	if err := json.Unmarshal(fileData, &cfg); err != nil {
 		return nil, fmt.Errorf("error parsing config file - %w", err)
 	}
 
-	if _, ok := raw["organize_to_library"]; !ok {
-		cfg.OrganizeToLibrary = true
+	if cfg.MKVOutputDirectory == "" {
+		return nil, fmt.Errorf("config file is missing mkv_output_directory")
 	}
 
-	applyLibraryConfigDefaults(&cfg)
-
-	if cfg.EncodeConfig.PresetFile != "" {
-		presetFile, err := readPresetFile(cfg.EncodeConfig.PresetFile)
-
-		if err != nil {
-			return nil, fmt.Errorf("error reading HandBrake preset file - %w", err)
-		}
-
-		if len(presetFile.PresetList) < 1 {
-			return nil, fmt.Errorf("no presets found in the HandBrake preset file - %s", cfg.EncodeConfig.PresetFile)
-		}
-
-		if len(presetFile.PresetList) > 0 {
-			cfg.EncodeConfig.Preset = presetFile.PresetList[0].PresetName
-
-			var format string
-
-			switch presetFile.PresetList[0].FileFormat {
-			case "av_mp4":
-				format = "mp4"
-			case "av_mkv":
-				format = "mkv"
-			case "av_webm":
-				format = "webm"
-			default:
-				format = "mkv"
-			}
-
-			cfg.EncodeConfig.OutputFileFormat = format
-		}
-	}
-
+	applyConfigDefaults(&cfg)
 	return &cfg, nil
 }
 
-// Reads a HandBrake preset file and returns a struct containing the contained presets.
-func readPresetFile(filePath string) (*HandBrakePresetFile, error) {
-	var presetFile HandBrakePresetFile
-
-	// Open the file
-	file, err := os.Open(filePath)
-
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("JSON preset file does not exist: %s", filePath)
-		}
-		return nil, fmt.Errorf("error opening file: %w", err)
-	}
-
-	defer file.Close()
-
-	// Decode the JSON file
-	decoder := json.NewDecoder(file)
-
-	if err := decoder.Decode(&presetFile); err != nil {
-		return nil, fmt.Errorf("error decoding JSON preset file: %w", err)
-	}
-
-	return &presetFile, nil
-}
-
-// Creates a config file with all global defaults. The file will be written to the specified location.
 func createConfigFile(location configFileLocation, config *handyMKVConfig, overwrite bool) error {
 	var configPath string
 
 	switch location {
 	case System:
-		// System-wide config location (not implemented in this example)
 		return fmt.Errorf("system-wide config location not supported")
 	case User:
 		var err error
@@ -254,12 +173,10 @@ func createConfigFile(location configFileLocation, config *handyMKVConfig, overw
 		return fmt.Errorf("unknown config file location")
 	}
 
-	// Ensure the directory exists
 	if err := os.MkdirAll(filepath.Dir(configPath), 0740); err != nil {
 		return fmt.Errorf("error creating config directory: %w", err)
 	}
 
-	// Check if the config file already exists
 	if _, err := os.Stat(configPath); err == nil && !overwrite {
 		fmt.Printf("\nA config file already exists at %s. Overwrite? [y/N]\n\n", configPath)
 		if strings.ToLower(readLine()) != "y" {
@@ -270,13 +187,11 @@ func createConfigFile(location configFileLocation, config *handyMKVConfig, overw
 		return fmt.Errorf("error checking for existing config file: %w", err)
 	}
 
-	// Marshal the config struct to JSON
 	configData, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return fmt.Errorf("error marshaling config to JSON: %w", err)
 	}
 
-	// Write the JSON data to the config file
 	if err := os.WriteFile(configPath, configData, 0640); err != nil {
 		return fmt.Errorf("error writing config file: %w", err)
 	}
@@ -284,161 +199,15 @@ func createConfigFile(location configFileLocation, config *handyMKVConfig, overw
 	return nil
 }
 
-// Prompts the user for configuration values and returns a new HandyMKVConfig object.
-func promptForConfig(hb *HandBrakeCLI, configLocationSelection int) (*handyMKVConfig, error) {
+func promptForConfig(configLocationSelection int) (*handyMKVConfig, error) {
 	var config handyMKVConfig
 
-	clear()
-	// Simplified handymkv encoder settings vs selecting a handbrake preset
-	fmt.Printf("You will now answer a series of questions to provide default values for your configuration. Please choose one of the three following options for encoding settings:\n\n")
-	fmt.Println("1 - Use HandyMKV Simplified Encoder Settings")
-	fmt.Println("2 - Use a Built-In HandBrake Preset")
-	fmt.Println("3 - Provide a Custom HandBrake Preset File")
-	fmt.Println()
-
-	var encoderSelection int
-
-	for {
-		encoderSelection, _ = strconv.Atoi(readLine())
-
-		if encoderSelection == 1 || encoderSelection == 2 || encoderSelection == 3 {
-			break
-		}
-
-		fmt.Println("Invalid selection. Please choose 1, 2, or 3.")
-	}
-
-	clear()
-
-	if encoderSelection == 1 {
-		encoderOptions, err := hb.getPossibleEncoders()
-
-		if err != nil {
-			fmt.Printf("Could not parse encoders - %v. Falling back to documentation defaults.\n", err)
-			encoderOptions = defaultPossibleEncoderValues
-		}
-
-		config.EncodeConfig.Encoder = promptForSelection("What encoder should be used by default?", encoderOptions)
-		clear()
-
-		// Make the user choose between providing a numeric quality and an encoder preset for quality
-		var qualitySelection int
-
-		fmt.Printf("You can provide an encoder preset for quality or a numeric quality value. Numeric values are only recommended if you are familiar with the encoder. Please choose one of the two following options:\n\n")
-		fmt.Printf("1 - Encoder Preset\n")
-		fmt.Printf("2 - Numeric Quality Value\n\n")
-
-		for {
-			qualitySelection, _ = strconv.Atoi(readLine())
-
-			if qualitySelection == 1 || qualitySelection == 2 {
-				break
-			}
-
-			fmt.Println("Invalid selection. Please choose 1 or 2.")
-		}
-
-		clear()
-
-		if qualitySelection == 1 {
-			encoderPresets, err := hb.getPossibleEncoderPresets(config.EncodeConfig.Encoder)
-
-			if err != nil {
-				return nil, err
-			}
-
-			encPresetPrompt := "What encoder preset should be used by default? A slower preset will result in larger, higher quality output files. Faster presets will result in smaller, lower quality output files. Some experimentation may be necessary."
-
-			config.EncodeConfig.EncoderPreset = promptForSelection(encPresetPrompt, encoderPresets)
-		} else {
-			config.EncodeConfig.Quality = promptForInt("What should the default quality be set to?")
-		}
-
-		clear()
-
-		config.EncodeConfig.AudioLanguages = promptForStringSlice("What audio languages should be included in encoded output files?",
-			"Provide a comma delimited list of ISO 639-2 strings. Example: eng,jpn",
-			"any")
-		clear()
-
-		config.EncodeConfig.IncludeAllRelevantAudio = promptForBool("Include all relevant audio tracks in encoded output files?",
-			"Some discs contain multiple audio tracks in the same language. If this option is enabled, all audio tracks in the same language will be included in the encoded output files. If this option is disabled, only the first audio track in the specified language will be included.",
-			true)
-		clear()
-
-		config.EncodeConfig.SubtitleLanguages = promptForStringSlice("What subtitle languages should be included in encoded output files?",
-			"Provide a comma delimited list of ISO 639-2 strings. Example: eng,jpn",
-			"eng")
-		clear()
-
-		config.EncodeConfig.IncludeAllRelevantSubtitles = promptForBool("Include all relevant subtitle tracks in encoded output files?",
-			"Some discs contain multiple subtitle tracks in the same language. If this option is enabled, all subtitle tracks in the same language will be included in the encoded output files.",
-			true)
-		clear()
-
-		config.EncodeConfig.OutputFileFormat = promptForSelection("What should the default output file format be?", []string{"mkv", "mp4", "webm"})
-		clear()
-	} else if encoderSelection == 2 {
-		var presets []string
-
-		presets, err := hb.getPossiblePresets()
-
-		if err != nil {
-			fmt.Printf("Could not parse presets - %v. Falling back to documentation defaults.\n", err)
-			return nil, err
-		}
-
-		config.EncodeConfig.Preset = promptForSelection("What HandBrake preset should be used by default?",
-			presets)
-
-		clear()
-	} else {
-		for {
-			// Custom HandBrake preset file
-			config.EncodeConfig.PresetFile = promptForString("Provide the path to a custom HandBrake preset file.",
-				"Absolute path to a HandBrake preset file. Note that if the file contains more than one preset, only the first preset in the file will be used.",
-				"",
-				nil)
-
-			if config.EncodeConfig.PresetFile == "" {
-				fmt.Printf("Invalid input.\n\n")
-				continue
-			}
-
-			presetFile, err := readPresetFile(config.EncodeConfig.PresetFile)
-
-			if err != nil {
-				fmt.Printf("Error reading HandBrake preset file - %v\n\n", err)
-				continue
-			}
-
-			if len(presetFile.PresetList) < 1 {
-				fmt.Printf("No presets found in the HandBrake preset file. Please provide a valid HandBrake preset file.\n\n")
-				continue
-			}
-
-			// Use the first preset in the file
-			if presetFile.PresetList[0].PresetName == "" {
-				fmt.Printf("Presets in the HandBrake preset file must have a name. Please provide a valid HandBrake preset file.\n\n")
-			}
-
-			config.EncodeConfig.Preset = presetFile.PresetList[0].PresetName
-			break
-		}
-
-		clear()
-	}
-
 	var handyMKVDir string
-
 	if configLocationSelection == 1 {
-		// Get logged in user's home directory
 		usr, err := user.Current()
-
 		if err != nil {
-			fmt.Printf("Error getting current user: %v\n", err)
+			return nil, fmt.Errorf("error getting current user: %w", err)
 		}
-
 		handyMKVDir = filepath.Join(usr.HomeDir, "handymkv")
 	} else {
 		handyMKVDir = "."
@@ -446,61 +215,37 @@ func promptForConfig(hb *HandBrakeCLI, configLocationSelection int) (*handyMKVCo
 
 	defaultMKVOutputDirectory := filepath.Join(handyMKVDir, "mkvoutput")
 
-	config.MKVOutputDirectory = promptForString("Provide a path to a directory that raw unencoded MKV files can be staged.",
+	clear()
+	config.MKVOutputDirectory = promptForString(
+		"Where should raw MKV files be staged during ripping?",
 		fmt.Sprintf("Absolute path to a directory. Example: %s", defaultMKVOutputDirectory),
 		defaultMKVOutputDirectory,
-		nil)
-
-	clear()
-
-	defaultHBOutputDirectory := filepath.Join(handyMKVDir, "hboutput")
-
-	config.HBOutputDirectory = promptForString("Provide a path to a directory that HandBrake encoded output files can be placed. Using the same directory as the MKV output directory is not recommended.",
-		fmt.Sprintf("Absolute path to a directory. Example: %s", defaultHBOutputDirectory),
-		defaultHBOutputDirectory, nil)
-
-	clear()
-
-	config.DeleteRawMKVFiles = promptForBool("Automatically delete raw unencoded files after ripping/encoding operations?",
-		"If enabled, raw unencoded mkv files will be deleted after the ripping/encoding operation completes. If disabled, raw unencoded files will be retained. Leaving this option enabled is recommended as it will save space on the disk.",
-		true)
-
-	clear()
-
-	config.OrganizeToLibrary = promptForBool(
-		"Organize encoded files into a Jellyfin-style media library after encoding?",
-		"If enabled, finished files are moved to LibraryRoot\\Movie Name (Year)\\Movie Name (Year).<ext>.",
-		true,
+		nil,
 	)
+
 	clear()
-
-	if config.OrganizeToLibrary {
-		config.LibraryRoot = promptForString(
-			"Where should organized movie files be saved?",
-			"Absolute path to your media library root folder.",
-			defaultLibraryRoot(),
-			nil,
-		)
-		clear()
-	}
-
-	config.DisableManifests = promptForBool(
-		"Disable run history logging?",
-		"If disabled, handymkv will not write manifest files after each run. Run history will not be available.",
-		false,
+	config.LibraryRoot = promptForString(
+		"Where should finished movies be organized?",
+		"Absolute path to your Jellyfin movie library root folder.",
+		defaultLibraryRoot(),
+		nil,
 	)
-	clear()
 
-	if !config.DisableManifests {
-		defaultManifestDir, _ := getManifestDir()
-		config.ManifestDirectory = promptForString(
-			"Where should run history (manifest files) be saved?",
-			"Absolute path to a directory.",
-			defaultManifestDir,
-			nil,
-		)
-		clear()
-	}
+	clear()
+	config.TVLibraryRoot = promptForString(
+		"Where should finished TV episodes be organized?",
+		"Absolute path to your Jellyfin TV shows library root folder.",
+		defaultTVLibraryRoot(),
+		nil,
+	)
+
+	clear()
+	config.NtfyTopic = promptForString(
+		"ntfy topic (optional, for phone notifications)",
+		"Subscribe to this topic in the ntfy app on your phone. Use a private, unguessable name. Leave blank to skip.",
+		"",
+		nil,
+	)
 
 	return &config, nil
 }

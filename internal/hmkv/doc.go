@@ -9,7 +9,7 @@ This package coordinates MakeMKV (disc ripping) and HandBrake (video encoding) a
 
 # Main Entry Points
 
-Setup() - Interactive configuration wizard that writes to ~/.config/handymkv/config.json (or platform-specific equivalents).
+Setup() - Interactive configuration wizard that prompts for output directories and writes config.json.
 
 Exec() - Main execution pipeline: reads disc titles, launches concurrent goroutines for MKV ripping and HB encoding, tracks progress, and optionally cleans up source files.
 
@@ -34,5 +34,5 @@ Exec() follows this flow:
   hb.go       Shell out to HandBrakeCLI, parse encoding progress
   progress.go Concurrent progress state, file-size polling
   term.go     ANSI colors, logos, terminal utilities
-  constants.go Custom error types, encoder constants
+  constants.go Custom error types
 */

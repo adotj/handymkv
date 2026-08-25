@@ -163,10 +163,6 @@ func writeManifest(dir string, startTime time.Time, m *manifest) (string, error)
 // resolveManifestDir returns the manifest directory from config (if available)
 // or falls back to getManifestDir().
 func resolveManifestDir() (string, error) {
-	cfg, err := ReadConfig()
-	if err == nil && cfg.ManifestDirectory != "" {
-		return cfg.ManifestDirectory, nil
-	}
 	return getManifestDir()
 }
 

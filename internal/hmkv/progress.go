@@ -18,6 +18,7 @@ type progressTracker struct {
 	err               error
 	animationFrame    int // Shared animation frame for synchronized ellipsis
 	lastRefreshTime   time.Time
+	processStartTime  time.Time
 	refreshInterval   time.Duration // Default: 200ms
 	pendingRefresh    bool          // True if data changed since last refresh
 }
@@ -160,6 +161,11 @@ func (pt *progressTracker) refreshDisplay() {
 
 		// Print the row
 		fmt.Printf("%s%s%s%s\n", titleCol, discIdCol, rippingCol, encodingCol)
+	}
+
+	if !pt.processStartTime.IsZero() {
+		elapsed := time.Since(pt.processStartTime).Round(time.Second)
+		fmt.Printf("\nTime elapsed: %s\n", formatTimeElapsedString(elapsed))
 	}
 }
 

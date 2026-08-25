@@ -91,15 +91,8 @@ func (t *TitleInfo) SetPrependDiscToSubdirectory(val bool) {
 	t.PrependDiscToSub = val
 }
 
-func (t *TitleInfo) GetEncodingFileName(config *handyMKVConfig) string {
-	// Replace spaces with underscores for encoding run.
-	encodingOutputFileName := strings.ReplaceAll(t.FileName, " ", "_")
-
-	if config.EncodeConfig.OutputFileFormat != "" && config.EncodeConfig.OutputFileFormat != "mkv" {
-		encodingOutputFileName = fmt.Sprintf("%s.%s", strings.TrimSuffix(encodingOutputFileName, ".mkv"), config.EncodeConfig.OutputFileFormat)
-	}
-
-	return encodingOutputFileName
+func (t *TitleInfo) GetEncodingFileName() string {
+	return strings.ReplaceAll(t.FileName, " ", "_")
 }
 
 func (t *TitleInfo) Subdirectory() string {
