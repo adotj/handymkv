@@ -277,6 +277,8 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
 	// HB
 	processWaitGroup.Add(1)
 
+	var encodingNotifyOnce sync.Once
+
 	go func() {
 		defer processWaitGroup.Done()
 		for {
@@ -285,6 +287,10 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
 				if !ok {
 					return
 				}
+
+				encodingNotifyOnce.Do(func() {
+					notifyEncodingStarted(config, processTitles, opts, tvMeta)
+				})
 
 				tracker.applyChange(params.TitleIndex, params.DiscId, func(status *titleStatus) {
 					status.Encoding = InProgress
@@ -413,8 +419,6 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
 			fmt.Printf("Manifest written to: %s\n", manifestPath)
 		}
 	}
-
-	notifyRipSuccess(config, libraryPaths, processTitles, opts, tvMeta, processDuration)
 
 	deleteRawFiles(config)
 

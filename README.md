@@ -24,7 +24,7 @@ As I developed HandyMKV, I found that I was able to add features that I found us
 - Automated cleanup of raw unencoded files
 - Run history — browse and inspect past ripping/encoding sessions
 - Automations — run custom scripts after encoding with parameters sourced from run data, environment variables, or user prompts
-- ntfy notifications — push alerts to your phone when a rip finishes or fails (via [ntfy.sh](https://ntfy.sh))
+- ntfy notifications — push alerts to your phone when encoding starts or a run fails (via [ntfy.sh](https://ntfy.sh))
 - Parsing of `HandBrakeCLI` and `makemkvcon` output to provide a more user-friendly experience
 
 ## Objectives
@@ -271,7 +271,7 @@ Run history can be disabled entirely via the configuration wizard or by setting 
 
 ## Notifications (ntfy)
 
-HandyMKV can send push notifications to your phone when a rip finishes or fails. This uses [ntfy.sh](https://ntfy.sh), a free pub-sub notification service.
+HandyMKV can send push notifications to your phone when ripping finishes and encoding begins, or when a run fails. This uses [ntfy.sh](https://ntfy.sh), a free pub-sub notification service.
 
 ### iPhone setup (one time)
 
@@ -311,14 +311,14 @@ You should receive the notification on your phone immediately.
 
 | Event | Notification title | When |
 |-------|-------------------|------|
-| Success | `HandyMKV — Ready for next disc` | After rip, encode, and library organization complete |
+| Ready for next disc | `HandyMKV — Ready for next disc` | When the first title finishes ripping and encoding starts |
 | Failure | `HandyMKV — Action needed` | If ripping, encoding, or library organization fails |
 
-The success message includes the movie or series name, elapsed time, and number of titles encoded.
+The ready notification includes the movie or series name and the number of titles being encoded.
 
 ### Unattended rips (important)
 
-Notifications only fire when the pipeline **completes or fails**. If HandyMKV is waiting for interactive input, no notification is sent. For hands-off rips on a headless server, pass flags that skip all prompts:
+Notifications only fire when encoding **starts** or the pipeline **fails**. If HandyMKV is waiting for interactive input, no notification is sent. For hands-off rips on a headless server, pass flags that skip all prompts:
 
 ```powershell
 handymkv -t longest -n "The Matrix (1999)"

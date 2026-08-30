@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestSendNtfyPostsTitleAndBody(t *testing.T) {
@@ -150,7 +149,7 @@ func TestMovieLabelForNotification(t *testing.T) {
 	})
 }
 
-func TestNotifyRipSuccessUsesConfig(t *testing.T) {
+func TestNotifyEncodingStartedUsesConfig(t *testing.T) {
 	var gotBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -164,13 +163,13 @@ func TestNotifyRipSuccessUsesConfig(t *testing.T) {
 		NtfyServer: server.URL,
 	}
 
-	notifyRipSuccess(config, nil, nil, ExecOptions{MediaName: "Inception (2010)"}, nil, 45*time.Minute)
+	notifyEncodingStarted(config, nil, ExecOptions{MediaName: "Inception (2010)"}, nil)
 
 	if !strings.Contains(gotBody, "Inception (2010)") {
 		t.Errorf("body = %q, want movie name", gotBody)
 	}
-	if !strings.Contains(gotBody, "45m0s") {
-		t.Errorf("body = %q, want duration", gotBody)
+	if !strings.Contains(gotBody, "now encoding") {
+		t.Errorf("body = %q, want encoding message", gotBody)
 	}
 }
 

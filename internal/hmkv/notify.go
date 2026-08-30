@@ -75,9 +75,9 @@ func notifyRipFailure(config *handyMKVConfig, err error) {
 	maybeNotify(config, "HandyMKV — Action needed", fmt.Sprintf("Rip failed: %v", err))
 }
 
-func notifyRipSuccess(config *handyMKVConfig, libraryPaths []string, processTitles []TitleInfo, opts ExecOptions, tvMeta *tvSeriesMeta, duration time.Duration) {
-	label := mediaLabelForNotification(libraryPaths, processTitles, opts, tvMeta)
-	message := fmt.Sprintf("%s finished in %s. %d title(s) encoded.", label, formatTimeElapsedString(duration), len(processTitles))
+func notifyEncodingStarted(config *handyMKVConfig, processTitles []TitleInfo, opts ExecOptions, tvMeta *tvSeriesMeta) {
+	label := mediaLabelForNotification(nil, processTitles, opts, tvMeta)
+	message := fmt.Sprintf("%s — ripping complete, now encoding. %d title(s).", label, len(processTitles))
 	maybeNotify(config, "HandyMKV — Ready for next disc", message)
 }
 
