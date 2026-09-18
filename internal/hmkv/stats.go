@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -76,7 +75,7 @@ func buildRipStatsRows(entries []EncodingParams, titles []TitleInfo, libraryPath
 
 		movieTitle := cleanMakeMKVTitleName(title.FileName)
 		if i < len(libraryPaths) && libraryPaths[i] != "" {
-			movieTitle = strings.TrimSuffix(filepath.Base(libraryPaths[i]), filepath.Ext(libraryPaths[i]))
+			movieTitle = libraryMovieFileTitle(libraryPaths[i])
 		}
 		if movieTitle == "" {
 			movieTitle = title.FileName

@@ -181,8 +181,10 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
 		}
 	}
 
-	// Create output directory dirSlug with timestamp
-	dirSlug := fmt.Sprintf("handymkv_%s", time.Now().Format("2006-01-02_15-04-05"))
+	processStartTime := time.Now()
+
+	// Create output directory dirSlug unique per process (overlapping runs must not share staging dirs).
+	dirSlug := newRunOutputSlug(processStartTime)
 
 	config.MKVOutputDirectory = filepath.Join(config.MKVOutputDirectory, dirSlug)
 
@@ -229,8 +231,16 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
 	var processWaitGroup sync.WaitGroup
 	var manifestMu sync.Mutex
 	var manifestEntries []EncodingParams
+	var libraryPaths []string
 
-	processStartTime := time.Now()
+	titleByKey := make(map[string]TitleInfo, len(processTitles))
+	titleOrdinal := make(map[string]int, len(processTitles))
+	for i, title := range processTitles {
+		key := titleKey(title.DiscId, title.Index)
+		titleByKey[key] = title
+		titleOrdinal[key] = i
+	}
+
 	tracker.processStartTime = processStartTime
 
 	// Start central refresh ticker for display updates
@@ -345,8 +355,24 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
 				params.ProcessingDuration = ripDuration + time.Since(encodeStart).Round(time.Second)
 				params.CompletedAt = time.Now().UTC()
 
+				key := titleKey(params.DiscId, params.TitleIndex)
+				title, ok := titleByKey[key]
+				if !ok {
+					tracker.setError(fmt.Errorf("could not find title metadata for disc %d title %d", params.DiscId, params.TitleIndex))
+					cancelProcessing()
+					return
+				}
+
+				destPath, finErr := finalizeEncodedTitle(params, title, titleOrdinal[key], config, opts, tvMeta)
+				if finErr != nil {
+					tracker.setError(fmt.Errorf("library organization failed: %w", finErr))
+					cancelProcessing()
+					return
+				}
+
 				manifestMu.Lock()
 				manifestEntries = append(manifestEntries, params)
+				libraryPaths = append(libraryPaths, destPath)
 				manifestMu.Unlock()
 			case <-ctx.Done():
 				return
@@ -367,10 +393,10 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
 
 	fmt.Printf("\nOperation Complete. Time Elapsed - %s\n", formatTimeElapsedString(processDuration))
 
-	totalSizeRaw, totalSizeEncoded, err := calculateTotalFileSizes(processTitles, config)
-
-	if err != nil {
-		fmt.Printf("An error occurred while calculating total sizes - %v\n", err)
+	var totalSizeRaw, totalSizeEncoded int64
+	for _, entry := range manifestEntries {
+		totalSizeRaw += entry.RippedFileSizeBytes
+		totalSizeEncoded += entry.EncodedFileSizeBytes
 	}
 
 	fmt.Printf("\nTotal size of raw unencoded files - %s\n", formatSavedSpace(totalSizeRaw))
@@ -381,14 +407,7 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
 		fmt.Printf("Total disk space saved via encoding - %s\n", formatSavedSpace(totalSizeRaw-totalSizeEncoded))
 	}
 
-	libraryPaths, err := organizeEncodedFilesToLibrary(manifestEntries, processTitles, config, opts, tvMeta)
-	if err != nil {
-		return fmt.Errorf("library organization failed: %w", err)
-	}
-
-	if err := appendRipHistory(manifestEntries, processTitles, libraryPaths); err != nil {
-		fmt.Printf("Warning: could not log rip stats: %v\n", err)
-	} else {
+	if len(libraryPaths) > 0 {
 		printCatalogSummary()
 	}
 

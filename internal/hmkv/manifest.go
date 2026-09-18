@@ -145,8 +145,7 @@ func writeManifest(dir string, startTime time.Time, m *manifest) (string, error)
 		return "", fmt.Errorf("could not create manifest directory: %w", err)
 	}
 
-	fileName := fmt.Sprintf("manifest_%s.json", startTime.Format("2006-01-02_15-04-05"))
-	filePath := filepath.Join(dir, fileName)
+	filePath := filepath.Join(dir, manifestFileName(startTime))
 
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {

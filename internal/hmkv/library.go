@@ -376,54 +376,7 @@ func organizeEncodedFilesToLibrary(entries []EncodingParams, titles []TitleInfo,
 		return organizeTVEpisodesToLibrary(entries, titles, config, *tvMeta)
 	}
 
-	titleByKey := make(map[string]TitleInfo, len(titles))
-	for _, title := range titles {
-		titleByKey[titleKey(title.DiscId, title.Index)] = title
-	}
-
-	finalPaths := make([]string, 0, len(entries))
-	useCLIForSingleTitle := len(entries) == 1 && (opts.MediaName != "" || opts.MediaYear != "")
-
-	for _, entry := range entries {
-		title, ok := titleByKey[titleKey(entry.DiscId, entry.TitleIndex)]
-		if !ok {
-			return finalPaths, fmt.Errorf("could not find title metadata for disc %d title %d", entry.DiscId, entry.TitleIndex)
-		}
-
-		nameFlag := ""
-		yearFlag := ""
-		if useCLIForSingleTitle {
-			nameFlag = opts.MediaName
-			yearFlag = opts.MediaYear
-		}
-
-		libName, err := resolveMovieLibraryName(title, nameFlag, yearFlag, config.LibraryRoot)
-		if err != nil {
-			return finalPaths, err
-		}
-
-		folderName := libName.FolderName()
-		destDir := filepath.Join(config.LibraryRoot, folderName)
-		ext := filepath.Ext(entry.HandBrakeOutputPath)
-		destPath := filepath.Join(destDir, folderName+ext)
-
-		if err := os.MkdirAll(destDir, 0755); err != nil {
-			return finalPaths, fmt.Errorf("could not create library folder %s: %w", destDir, err)
-		}
-
-		if _, err := os.Stat(destPath); err == nil {
-			return finalPaths, fmt.Errorf("library file already exists: %s", destPath)
-		}
-
-		if err := moveFile(entry.HandBrakeOutputPath, destPath); err != nil {
-			return finalPaths, fmt.Errorf("could not move encoded file to library: %w", err)
-		}
-
-		fmt.Printf("Moved to library: %s\n", destPath)
-		finalPaths = append(finalPaths, destPath)
-	}
-
-	return finalPaths, nil
+	return organizeMovieEntriesToLibrary(entries, titles, config, opts)
 }
 
 func organizeTVEpisodesToLibrary(entries []EncodingParams, titles []TitleInfo, config *handyMKVConfig, meta tvSeriesMeta) ([]string, error) {
@@ -661,6 +614,33 @@ func ValidateTitleMode(titleMode string) error {
 
 func titleKey(discId, titleIndex int) string {
 	return fmt.Sprintf("%d:%d", discId, titleIndex)
+}
+
+// libraryMovieFolderName returns the Jellyfin movie folder name from a library file path.
+// Windows paths are normalized so parsing works on every GOOS (tests use D:\... on Linux).
+func normalizeLibraryPath(libraryFilePath string) string {
+	return strings.ReplaceAll(libraryFilePath, `\`, `/`)
+}
+
+func libraryMovieFolderName(libraryFilePath string) string {
+	p := normalizeLibraryPath(libraryFilePath)
+	dir := p
+	if idx := strings.LastIndex(p, "/"); idx >= 0 {
+		dir = p[:idx]
+	}
+	if idx := strings.LastIndex(dir, "/"); idx >= 0 {
+		return dir[idx+1:]
+	}
+	return dir
+}
+
+func libraryMovieFileTitle(libraryFilePath string) string {
+	p := normalizeLibraryPath(libraryFilePath)
+	p = strings.TrimSuffix(p, filepath.Ext(p))
+	if idx := strings.LastIndex(p, "/"); idx >= 0 {
+		return p[idx+1:]
+	}
+	return p
 }
 
 func moveFile(src, dest string) error {

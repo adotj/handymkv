@@ -67,6 +67,16 @@ func TestParseMovieNameYear(t *testing.T) {
 	}
 }
 
+func TestLibraryMoviePathParsingWindowsStyle(t *testing.T) {
+	path := `D:\movies\Clean Title (2020)\Clean Title (2020).mkv`
+	if got := libraryMovieFileTitle(path); got != "Clean Title (2020)" {
+		t.Fatalf("libraryMovieFileTitle() = %q", got)
+	}
+	if got := libraryMovieFolderName(path); got != "Clean Title (2020)" {
+		t.Fatalf("libraryMovieFolderName() = %q", got)
+	}
+}
+
 func TestMovieLibraryNameFolderName(t *testing.T) {
 	got := movieLibraryName{Name: "The Shining", Year: "1980"}.FolderName()
 	if got != "The Shining (1980)" {

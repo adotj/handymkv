@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -97,7 +96,18 @@ func mediaLabelForNotification(libraryPaths []string, processTitles []TitleInfo,
 		}
 		if len(libraryPaths) > 0 {
 			// .../Series/Season XX/file.mkv → series folder is two levels up
-			return filepath.Base(filepath.Dir(filepath.Dir(libraryPaths[0])))
+			p := normalizeLibraryPath(libraryPaths[0])
+			dir := p
+			if idx := strings.LastIndex(p, "/"); idx >= 0 {
+				dir = p[:idx]
+			}
+			if idx := strings.LastIndex(dir, "/"); idx >= 0 {
+				dir = dir[:idx]
+			}
+			if idx := strings.LastIndex(dir, "/"); idx >= 0 {
+				return dir[idx+1:]
+			}
+			return dir
 		}
 	}
 
@@ -119,7 +129,7 @@ func movieLabelForNotification(libraryPaths []string, processTitles []TitleInfo,
 	}
 
 	if len(libraryPaths) > 0 {
-		return filepath.Base(filepath.Dir(libraryPaths[0]))
+		return libraryMovieFolderName(libraryPaths[0])
 	}
 
 	if len(processTitles) > 0 {
