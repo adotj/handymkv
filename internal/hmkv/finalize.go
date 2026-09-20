@@ -10,13 +10,13 @@ import (
 // A cross-process lock serializes this step so overlapping handymkv runs do not corrupt
 // shared history files or race on library moves.
 func finalizeEncodedTitle(
-	entry EncodingParams,
+	entry *EncodingParams,
 	title TitleInfo,
 	titleOrdinal int,
 	config *handyMKVConfig,
 	opts ExecOptions,
 	tvMeta *tvSeriesMeta,
-) (libraryPath string, err error) {
+) (libraryPath string, keptRaw bool, err error) {
 	applyLibraryConfigDefaults(config)
 
 	err = withFinalizeLock(func() error {
@@ -28,15 +28,16 @@ func finalizeEncodedTitle(
 		}
 
 		var paths []string
+		var keptRawCount int
 		if opts.TVMode {
 			if tvMeta == nil {
 				return fmt.Errorf("TV series metadata is required for TV library organization")
 			}
 			episodeMeta := *tvMeta
 			episodeMeta.StartEpisode = tvMeta.StartEpisode + titleOrdinal
-			paths, err = organizeTVEpisodesToLibrary([]EncodingParams{entry}, []TitleInfo{title}, config, episodeMeta)
+			paths, keptRawCount, err = organizeTVEpisodesToLibrary([]EncodingParams{*entry}, []TitleInfo{title}, config, episodeMeta)
 		} else {
-			paths, err = organizeMovieEntriesToLibrary([]EncodingParams{entry}, []TitleInfo{title}, config, opts)
+			paths, keptRawCount, err = organizeMovieEntriesToLibrary([]EncodingParams{*entry}, []TitleInfo{title}, config, opts)
 		}
 		if err != nil {
 			return err
@@ -46,30 +47,39 @@ func finalizeEncodedTitle(
 		}
 
 		libraryPath = paths[0]
-		if err := appendRipHistory([]EncodingParams{entry}, []TitleInfo{title}, paths); err != nil {
-			return fmt.Errorf("could not log rip stats: %w", err)
+		keptRaw = keptRawCount > 0
+		if keptRaw {
+			entry.LibraryKeptRaw = true
+			if entry.RippedFileSizeBytes > 0 {
+				entry.EncodedFileSizeBytes = entry.RippedFileSizeBytes
+			}
+		}
+
+		if err := appendRipHistory([]EncodingParams{*entry}, []TitleInfo{title}, paths); err != nil {
+			fmt.Printf("Warning: encoded file moved to library but rip stats were not updated: %v\n", err)
 		}
 		return nil
 	})
 
-	return libraryPath, err
+	return libraryPath, keptRaw, err
 }
 
 // organizeMovieEntriesToLibrary is the movie branch of organizeEncodedFilesToLibrary,
 // exposed for per-title finalize and tests.
-func organizeMovieEntriesToLibrary(entries []EncodingParams, titles []TitleInfo, config *handyMKVConfig, opts ExecOptions) ([]string, error) {
+func organizeMovieEntriesToLibrary(entries []EncodingParams, titles []TitleInfo, config *handyMKVConfig, opts ExecOptions) ([]string, int, error) {
 	titleByKey := make(map[string]TitleInfo, len(titles))
 	for _, title := range titles {
 		titleByKey[titleKey(title.DiscId, title.Index)] = title
 	}
 
 	finalPaths := make([]string, 0, len(entries))
+	keptRawCount := 0
 	useCLIForSingleTitle := len(entries) == 1 && (opts.MediaName != "" || opts.MediaYear != "")
 
 	for _, entry := range entries {
 		title, ok := titleByKey[titleKey(entry.DiscId, entry.TitleIndex)]
 		if !ok {
-			return finalPaths, fmt.Errorf("could not find title metadata for disc %d title %d", entry.DiscId, entry.TitleIndex)
+			return finalPaths, keptRawCount, fmt.Errorf("could not find title metadata for disc %d title %d", entry.DiscId, entry.TitleIndex)
 		}
 
 		nameFlag := ""
@@ -81,29 +91,34 @@ func organizeMovieEntriesToLibrary(entries []EncodingParams, titles []TitleInfo,
 
 		libName, err := resolveMovieLibraryName(title, nameFlag, yearFlag, config.LibraryRoot)
 		if err != nil {
-			return finalPaths, err
+			return finalPaths, keptRawCount, err
 		}
 
 		folderName := libName.FolderName()
 		destDir := filepath.Join(config.LibraryRoot, folderName)
 		ext := filepath.Ext(entry.HandBrakeOutputPath)
-		destPath := filepath.Join(destDir, folderName+ext)
+		if ext == "" {
+			ext = filepath.Ext(entry.MKVOutputPath)
+		}
+		destPath := filepath.Join(destDir, libName.FileBaseName()+ext)
 
 		if err := os.MkdirAll(destDir, 0755); err != nil {
-			return finalPaths, fmt.Errorf("could not create library folder %s: %w", destDir, err)
+			return finalPaths, keptRawCount, fmt.Errorf("could not create library folder %s: %w", destDir, err)
 		}
 
 		if _, err := os.Stat(destPath); err == nil {
-			return finalPaths, fmt.Errorf("library file already exists: %s", destPath)
+			return finalPaths, keptRawCount, fmt.Errorf("library file already exists: %s", destPath)
 		}
 
-		if err := moveFile(entry.HandBrakeOutputPath, destPath); err != nil {
-			return finalPaths, fmt.Errorf("could not move encoded file to library: %w", err)
+		keptRaw, err := moveLibrarySource(entry, destPath)
+		if err != nil {
+			return finalPaths, keptRawCount, err
 		}
-
-		fmt.Printf("Moved to library: %s\n", destPath)
+		if keptRaw {
+			keptRawCount++
+		}
 		finalPaths = append(finalPaths, destPath)
 	}
 
-	return finalPaths, nil
+	return finalPaths, keptRawCount, nil
 }

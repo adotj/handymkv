@@ -70,6 +70,7 @@ type EncodingParams struct {
 	RippingDuration             string        `json:"-"`
 	ProcessingDuration          time.Duration `json:"-"`
 	CompletedAt                 time.Time     `json:"-"`
+	LibraryKeptRaw              bool          `json:"-"`
 	Encoder                     string   `json:"-"`
 	EncoderPreset               string   `json:"-"`
 	Quality                     int      `json:"-"`
