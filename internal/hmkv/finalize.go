@@ -47,7 +47,7 @@ func finalizeEncodedTitle(
 
 		libraryPath = paths[0]
 		if err := appendRipHistory([]EncodingParams{entry}, []TitleInfo{title}, paths); err != nil {
-			return fmt.Errorf("could not log rip stats: %w", err)
+			fmt.Printf("Warning: encoded file moved to library but rip stats were not updated: %v\n", err)
 		}
 		return nil
 	})
@@ -87,7 +87,7 @@ func organizeMovieEntriesToLibrary(entries []EncodingParams, titles []TitleInfo,
 		folderName := libName.FolderName()
 		destDir := filepath.Join(config.LibraryRoot, folderName)
 		ext := filepath.Ext(entry.HandBrakeOutputPath)
-		destPath := filepath.Join(destDir, folderName+ext)
+		destPath := filepath.Join(destDir, libName.FileBaseName()+ext)
 
 		if err := os.MkdirAll(destDir, 0755); err != nil {
 			return finalPaths, fmt.Errorf("could not create library folder %s: %w", destDir, err)

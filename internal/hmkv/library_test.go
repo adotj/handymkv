@@ -84,6 +84,36 @@ func TestMovieLibraryNameFolderName(t *testing.T) {
 	}
 }
 
+func TestSplitJellyfinEditionSuffix(t *testing.T) {
+	tests := []struct {
+		input      string
+		wantBase   string
+		wantEdition string
+	}{
+		{"Knocked Up {edition-Unrated}", "Knocked Up", "{edition-Unrated}"},
+		{"Knocked Up (2007) {edition-Director's Cut}", "Knocked Up (2007)", "{edition-Director's Cut}"},
+		{"The Devil Wears Prada", "The Devil Wears Prada", ""},
+	}
+	for _, tt := range tests {
+		base, edition := splitJellyfinEditionSuffix(tt.input)
+		if base != tt.wantBase || edition != tt.wantEdition {
+			t.Errorf("splitJellyfinEditionSuffix(%q) = (%q, %q), want (%q, %q)",
+				tt.input, base, edition, tt.wantBase, tt.wantEdition)
+		}
+	}
+}
+
+func TestMovieLibraryNameFileBaseNameWithEdition(t *testing.T) {
+	lib := movieLibraryName{Name: "Knocked Up", Year: "2007", Edition: "{edition-Unrated}"}
+	if got := lib.FolderName(); got != "Knocked Up (2007)" {
+		t.Fatalf("FolderName() = %q", got)
+	}
+	wantFile := "Knocked Up (2007) {edition-Unrated}"
+	if got := lib.FileBaseName(); got != wantFile {
+		t.Fatalf("FileBaseName() = %q, want %q", got, wantFile)
+	}
+}
+
 func TestTVLibraryTargetPaths(t *testing.T) {
 	target := tvLibraryTarget{
 		Series:  "Star Trek",
@@ -266,6 +296,19 @@ func TestResolveMovieLibraryName(t *testing.T) {
 			title:    shiningTitle,
 			flagName: "The Shining",
 			wantErr:  "expected format: Movie Name (Year) or use -y",
+		},
+		{
+			name:     "name with jellyfin edition and year flag",
+			title:    shiningTitle,
+			flagName: "Knocked Up {edition-Unrated}",
+			flagYear: "2007",
+			want:     movieLibraryName{Name: "Knocked Up", Year: "2007", Edition: "{edition-Unrated}"},
+		},
+		{
+			name:     "full jellyfin name with edition",
+			title:    shiningTitle,
+			flagName: "The Devil Wears Prada (2006)",
+			want:     movieLibraryName{Name: "The Devil Wears Prada", Year: "2006"},
 		},
 	}
 

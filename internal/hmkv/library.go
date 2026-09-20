@@ -16,11 +16,13 @@ var (
 	makeMKVDiscSuffixRe  = regexp.MustCompile(`-[A-Za-z]\d+$`)
 	yearInParensRe       = regexp.MustCompile(`\((19|20)\d{2}\)`)
 	yearTokenRe          = regexp.MustCompile(`(?:^|[\s_\-])((19|20)\d{2})(?:[\s_\-]|$)`)
+	jellyfinEditionTagRe = regexp.MustCompile(`(?i)\s*\{edition-[^}]+\}\s*$`)
 )
 
 type movieLibraryName struct {
-	Name string
-	Year string
+	Name    string
+	Year    string
+	Edition string // Jellyfin filename suffix, e.g. "{edition-Unrated}"
 }
 
 func (m movieLibraryName) FolderName() string {
@@ -28,6 +30,31 @@ func (m movieLibraryName) FolderName() string {
 		return fmt.Sprintf("%s (%s)", m.Name, m.Year)
 	}
 	return m.Name
+}
+
+// FileBaseName is the Jellyfin movie file name without extension (edition tag follows the year).
+func (m movieLibraryName) FileBaseName() string {
+	base := m.FolderName()
+	edition := strings.TrimSpace(m.Edition)
+	if edition == "" {
+		return base
+	}
+	return base + " " + edition
+}
+
+// splitJellyfinEditionSuffix removes a trailing {edition-...} token from a -n value.
+func splitJellyfinEditionSuffix(input string) (base, edition string) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return "", ""
+	}
+	loc := jellyfinEditionTagRe.FindStringIndex(input)
+	if loc == nil {
+		return input, ""
+	}
+	edition = strings.TrimSpace(input[loc[0]:loc[1]])
+	base = strings.TrimSpace(input[:loc[0]])
+	return base, edition
 }
 
 func defaultLibraryRoot() string {
@@ -256,6 +283,10 @@ func bestNameFromTitle(title TitleInfo) string {
 func resolveMovieLibraryName(title TitleInfo, flagName string, flagYear string, libraryRoot string) (movieLibraryName, error) {
 	flagName = strings.TrimSpace(flagName)
 	flagYear = strings.TrimSpace(flagYear)
+	edition := ""
+	if flagName != "" {
+		flagName, edition = splitJellyfinEditionSuffix(flagName)
+	}
 
 	if flagName != "" {
 		name, year, ok := parseMovieNameYear(flagName)
@@ -263,13 +294,13 @@ func resolveMovieLibraryName(title TitleInfo, flagName string, flagYear string, 
 			if flagYear != "" && flagYear != year {
 				return movieLibraryName{}, fmt.Errorf("conflicting year: -n specifies %s but -y specifies %s", year, flagYear)
 			}
-			return movieLibraryName{Name: name, Year: year}, nil
+			return movieLibraryName{Name: name, Year: year, Edition: edition}, nil
 		}
 		if flagYear != "" {
 			if !isValidYear(flagYear) {
 				return movieLibraryName{}, fmt.Errorf("invalid release year %q", flagYear)
 			}
-			return movieLibraryName{Name: flagName, Year: flagYear}, nil
+			return movieLibraryName{Name: flagName, Year: flagYear, Edition: edition}, nil
 		}
 		return movieLibraryName{}, fmt.Errorf("invalid movie name %q, expected format: Movie Name (Year) or use -y", flagName)
 	}
