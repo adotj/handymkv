@@ -232,6 +232,7 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
 	var manifestMu sync.Mutex
 	var manifestEntries []EncodingParams
 	var libraryPaths []string
+	var keptRawLibraryCount int
 
 	titleByKey := make(map[string]TitleInfo, len(processTitles))
 	titleOrdinal := make(map[string]int, len(processTitles))
@@ -363,7 +364,7 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
 					return
 				}
 
-				destPath, finErr := finalizeEncodedTitle(params, title, titleOrdinal[key], config, opts, tvMeta)
+				destPath, keptRaw, finErr := finalizeEncodedTitle(&params, title, titleOrdinal[key], config, opts, tvMeta)
 				if finErr != nil {
 					tracker.setError(fmt.Errorf("library organization failed: %w", finErr))
 					cancelProcessing()
@@ -373,6 +374,9 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
 				manifestMu.Lock()
 				manifestEntries = append(manifestEntries, params)
 				libraryPaths = append(libraryPaths, destPath)
+				if keptRaw {
+					keptRawLibraryCount++
+				}
 				manifestMu.Unlock()
 			case <-ctx.Done():
 				return
@@ -439,7 +443,13 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
 		}
 	}
 
+	// Raw MKVs kept in the library were moved out of MKVOutputDirectory during finalize;
+	// deleteRawFiles only removes remaining staging rips for titles that kept the encode.
 	deleteRawFiles(config)
+
+	if keptRawLibraryCount > 0 {
+		fmt.Printf("\nKept raw MKV in library for %d title(s) where HandBrake output was larger than the rip.\n", keptRawLibraryCount)
+	}
 
 	if len(libraryPaths) > 0 {
 		fmt.Printf("\nOrganized library files:\n")

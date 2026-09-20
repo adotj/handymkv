@@ -1,6 +1,7 @@
 package hmkv
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -195,7 +196,7 @@ func TestOrganizeTVEpisodesToLibrary(t *testing.T) {
 	config := &handyMKVConfig{TVLibraryRoot: tvRoot}
 	meta := tvSeriesMeta{Series: "Star Trek", Year: "1966", Season: 1, StartEpisode: 5}
 
-	paths, err := organizeTVEpisodesToLibrary(entries, titles, config, meta)
+	paths, _, err := organizeTVEpisodesToLibrary(entries, titles, config, meta)
 	if err != nil {
 		t.Fatalf("organizeTVEpisodesToLibrary: %v", err)
 	}
@@ -331,6 +332,103 @@ func TestResolveMovieLibraryName(t *testing.T) {
 				t.Fatalf("resolveMovieLibraryName() = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestLibrarySourceKeepsSmallerFile(t *testing.T) {
+	rawPath := filepath.Join(t.TempDir(), "raw.mkv")
+	encPath := filepath.Join(t.TempDir(), "enc.mkv")
+
+	tests := []struct {
+		name    string
+		rawSize int64
+		encSize int64
+		wantRaw bool
+	}{
+		{"encode strictly larger", 100, 200, true},
+		{"encode smaller", 200, 100, false},
+		{"equal sizes keep encode", 100, 100, false},
+		{"unknown sizes keep encode", 0, 200, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry := EncodingParams{
+				MKVOutputPath:        rawPath,
+				HandBrakeOutputPath:  encPath,
+				RippedFileSizeBytes:  tt.rawSize,
+				EncodedFileSizeBytes: tt.encSize,
+			}
+			src, keptRaw := librarySource(entry)
+			if keptRaw != tt.wantRaw {
+				t.Fatalf("keptRaw = %v, want %v", keptRaw, tt.wantRaw)
+			}
+			if tt.wantRaw && src != rawPath {
+				t.Fatalf("src = %q, want raw %q", src, rawPath)
+			}
+			if !tt.wantRaw && src != encPath {
+				t.Fatalf("src = %q, want encode %q", src, encPath)
+			}
+		})
+	}
+}
+
+func TestOrganizeMovieKeepsRawWhenEncodeLarger(t *testing.T) {
+	tmp := t.TempDir()
+	libraryRoot := filepath.Join(tmp, "movies")
+	rawDir := filepath.Join(tmp, "mkv", "DISC")
+	hbDir := filepath.Join(tmp, "hb", "DISC")
+	if err := os.MkdirAll(rawDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(hbDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := filepath.Join(rawDir, "title.mkv")
+	enc := filepath.Join(hbDir, "title.mkv")
+	if err := os.WriteFile(raw, bytes.Repeat([]byte("a"), 100), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(enc, bytes.Repeat([]byte("b"), 250), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	title := TitleInfo{DiscId: 0, Index: 0, FileName: "title.mkv", DiscTitle: "DISC"}
+	entry := EncodingParams{
+		DiscId:               0,
+		TitleIndex:           0,
+		MKVOutputPath:        raw,
+		HandBrakeOutputPath:  enc,
+		RippedFileSizeBytes:  100,
+		EncodedFileSizeBytes: 250,
+	}
+	config := &handyMKVConfig{LibraryRoot: libraryRoot}
+	opts := ExecOptions{MediaName: "Big Encode", MediaYear: "2020"}
+
+	paths, keptRawCount, err := organizeMovieEntriesToLibrary([]EncodingParams{entry}, []TitleInfo{title}, config, opts)
+	if err != nil {
+		t.Fatalf("organizeMovieEntriesToLibrary: %v", err)
+	}
+	if keptRawCount != 1 {
+		t.Fatalf("keptRawCount = %d, want 1", keptRawCount)
+	}
+	want := filepath.Join(libraryRoot, "Big Encode (2020)", "Big Encode (2020).mkv")
+	if len(paths) != 1 || paths[0] != want {
+		t.Fatalf("paths = %#v, want [%q]", paths, want)
+	}
+	got, err := os.ReadFile(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 100 || got[0] != 'a' {
+		t.Fatalf("library file should be raw rip content, got len=%d", len(got))
+	}
+	if _, err := os.Stat(raw); !os.IsNotExist(err) {
+		t.Fatalf("raw staging file should be moved into library")
+	}
+	if _, err := os.Stat(enc); !os.IsNotExist(err) {
+		t.Fatalf("larger encode should be deleted from staging")
 	}
 }
 

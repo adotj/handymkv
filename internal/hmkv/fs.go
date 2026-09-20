@@ -24,6 +24,8 @@ func getFileSize(filePath string) (int64, error) {
 }
 
 func deleteRawFiles(config *handyMKVConfig) {
+	// Titles that kept the raw rip in the library no longer have that MKV under
+	// MKVOutputDirectory (it was moved during finalize). This removes only leftover staging rips.
 	// Check if the directory still exists (it may have been moved by an automation)
 	if _, err := os.Stat(config.MKVOutputDirectory); os.IsNotExist(err) {
 		fmt.Printf("\nRaw MKV output directory no longer exists (may have been moved by an automation). Skipping deletion.\n")

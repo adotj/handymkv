@@ -80,7 +80,7 @@ func TestOrganizeMovieEntriesToLibrary(t *testing.T) {
 	config := &handyMKVConfig{LibraryRoot: libraryRoot}
 	opts := ExecOptions{MediaName: "Honeymoon in Vegas", MediaYear: "1992"}
 
-	paths, err := organizeMovieEntriesToLibrary([]EncodingParams{entry}, []TitleInfo{title}, config, opts)
+	paths, _, err := organizeMovieEntriesToLibrary([]EncodingParams{entry}, []TitleInfo{title}, config, opts)
 	if err != nil {
 		t.Fatalf("organizeMovieEntriesToLibrary: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestOrganizeMovieEntriesToLibraryWithEditionTag(t *testing.T) {
 	config := &handyMKVConfig{LibraryRoot: libraryRoot}
 	opts := ExecOptions{MediaName: "Knocked Up {edition-Unrated}", MediaYear: "2007"}
 
-	paths, err := organizeMovieEntriesToLibrary([]EncodingParams{entry}, []TitleInfo{title}, config, opts)
+	paths, _, err := organizeMovieEntriesToLibrary([]EncodingParams{entry}, []TitleInfo{title}, config, opts)
 	if err != nil {
 		t.Fatalf("organizeMovieEntriesToLibrary: %v", err)
 	}
@@ -156,9 +156,12 @@ func TestFinalizeEncodedTitleMovesAfterEncode(t *testing.T) {
 	config := &handyMKVConfig{LibraryRoot: libraryRoot}
 	opts := ExecOptions{MediaName: "The Devil Wears Prada", MediaYear: "2006"}
 
-	dest, err := finalizeEncodedTitle(entry, title, 0, config, opts, nil)
+	dest, keptRaw, err := finalizeEncodedTitle(&entry, title, 0, config, opts, nil)
 	if err != nil {
 		t.Fatalf("finalizeEncodedTitle: %v", err)
+	}
+	if keptRaw {
+		t.Fatal("expected encode to be kept for library")
 	}
 	want := filepath.Join(libraryRoot, "The Devil Wears Prada (2006)", "The Devil Wears Prada (2006).mkv")
 	if dest != want {
@@ -169,5 +172,51 @@ func TestFinalizeEncodedTitleMovesAfterEncode(t *testing.T) {
 	}
 	if _, err := os.Stat(want); err != nil {
 		t.Fatalf("library file missing: %v", err)
+	}
+}
+
+func TestFinalizeEncodedTitleKeepsRawWhenEncodeLarger(t *testing.T) {
+	tmp := t.TempDir()
+	libraryRoot := filepath.Join(tmp, "movies")
+	raw := filepath.Join(tmp, "mkv", "DISC", "t.mkv")
+	enc := filepath.Join(tmp, "hb", "DISC", "t.mkv")
+	if err := os.MkdirAll(filepath.Dir(raw), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(enc), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(raw, make([]byte, 50), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(enc, make([]byte, 500), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	lockFile := filepath.Join(t.TempDir(), "finalize.lock")
+	finalizeLockPathOverride = lockFile
+	t.Cleanup(func() { finalizeLockPathOverride = "" })
+
+	entry := EncodingParams{
+		DiscId:               0,
+		TitleIndex:           0,
+		MKVOutputPath:        raw,
+		HandBrakeOutputPath:  enc,
+		RippedFileSizeBytes:  50,
+		EncodedFileSizeBytes: 500,
+	}
+	title := TitleInfo{DiscId: 0, Index: 0, FileName: "t.mkv", DiscTitle: "DISC"}
+	config := &handyMKVConfig{LibraryRoot: libraryRoot}
+	opts := ExecOptions{MediaName: "Inflated Encode", MediaYear: "2021"}
+
+	_, keptRaw, err := finalizeEncodedTitle(&entry, title, 0, config, opts, nil)
+	if err != nil {
+		t.Fatalf("finalizeEncodedTitle: %v", err)
+	}
+	if !keptRaw || !entry.LibraryKeptRaw {
+		t.Fatalf("expected raw kept in library, keptRaw=%v LibraryKeptRaw=%v", keptRaw, entry.LibraryKeptRaw)
+	}
+	if _, err := os.Stat(enc); !os.IsNotExist(err) {
+		t.Fatalf("larger encode should be removed from staging")
 	}
 }

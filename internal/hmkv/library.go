@@ -404,26 +404,32 @@ func organizeEncodedFilesToLibrary(entries []EncodingParams, titles []TitleInfo,
 		if tvMeta == nil {
 			return nil, fmt.Errorf("TV series metadata is required for TV library organization")
 		}
-		return organizeTVEpisodesToLibrary(entries, titles, config, *tvMeta)
+		paths, _, err := organizeTVEpisodesToLibrary(entries, titles, config, *tvMeta)
+		return paths, err
 	}
 
-	return organizeMovieEntriesToLibrary(entries, titles, config, opts)
+	paths, _, err := organizeMovieEntriesToLibrary(entries, titles, config, opts)
+	return paths, err
 }
 
-func organizeTVEpisodesToLibrary(entries []EncodingParams, titles []TitleInfo, config *handyMKVConfig, meta tvSeriesMeta) ([]string, error) {
+func organizeTVEpisodesToLibrary(entries []EncodingParams, titles []TitleInfo, config *handyMKVConfig, meta tvSeriesMeta) ([]string, int, error) {
 	entryByKey := make(map[string]EncodingParams, len(entries))
 	for _, entry := range entries {
 		entryByKey[titleKey(entry.DiscId, entry.TitleIndex)] = entry
 	}
 
 	finalPaths := make([]string, 0, len(titles))
+	keptRawCount := 0
 	for i, title := range titles {
 		entry, ok := entryByKey[titleKey(title.DiscId, title.Index)]
 		if !ok {
-			return finalPaths, fmt.Errorf("could not find encoded file for disc %d title %d", title.DiscId, title.Index)
+			return finalPaths, keptRawCount, fmt.Errorf("could not find encoded file for disc %d title %d", title.DiscId, title.Index)
 		}
 
 		ext := filepath.Ext(entry.HandBrakeOutputPath)
+		if ext == "" {
+			ext = filepath.Ext(entry.MKVOutputPath)
+		}
 		target := tvLibraryTarget{
 			Series:  meta.Series,
 			Year:    meta.Year,
@@ -434,22 +440,24 @@ func organizeTVEpisodesToLibrary(entries []EncodingParams, titles []TitleInfo, c
 		destDir := filepath.Dir(destPath)
 
 		if err := os.MkdirAll(destDir, 0755); err != nil {
-			return finalPaths, fmt.Errorf("could not create library folder %s: %w", destDir, err)
+			return finalPaths, keptRawCount, fmt.Errorf("could not create library folder %s: %w", destDir, err)
 		}
 
 		if _, err := os.Stat(destPath); err == nil {
-			return finalPaths, fmt.Errorf("library file already exists: %s", destPath)
+			return finalPaths, keptRawCount, fmt.Errorf("library file already exists: %s", destPath)
 		}
 
-		if err := moveFile(entry.HandBrakeOutputPath, destPath); err != nil {
-			return finalPaths, fmt.Errorf("could not move encoded file to library: %w", err)
+		keptRaw, err := moveLibrarySource(entry, destPath)
+		if err != nil {
+			return finalPaths, keptRawCount, err
 		}
-
-		fmt.Printf("Moved to library: %s\n", destPath)
+		if keptRaw {
+			keptRawCount++
+		}
 		finalPaths = append(finalPaths, destPath)
 	}
 
-	return finalPaths, nil
+	return finalPaths, keptRawCount, nil
 }
 
 // resolveTVSeriesMeta builds series naming from CLI flags and/or interactive prompts.
@@ -672,6 +680,54 @@ func libraryMovieFileTitle(libraryFilePath string) string {
 		return p[idx+1:]
 	}
 	return p
+}
+
+func effectiveLibraryFileSizes(entry EncodingParams) (rawBytes, encBytes int64) {
+	rawBytes = entry.RippedFileSizeBytes
+	encBytes = entry.EncodedFileSizeBytes
+	if rawBytes <= 0 && entry.MKVOutputPath != "" {
+		if st, err := os.Stat(entry.MKVOutputPath); err == nil {
+			rawBytes = st.Size()
+		}
+	}
+	if encBytes <= 0 && entry.HandBrakeOutputPath != "" {
+		if st, err := os.Stat(entry.HandBrakeOutputPath); err == nil {
+			encBytes = st.Size()
+		}
+	}
+	return rawBytes, encBytes
+}
+
+// librarySource selects the file to place in the Jellyfin library. When the encode is
+// strictly larger than the raw rip, the raw MKV is kept instead.
+func librarySource(entry EncodingParams) (srcPath string, keptRaw bool) {
+	rawBytes, encBytes := effectiveLibraryFileSizes(entry)
+	if rawBytes > 0 && encBytes > 0 && encBytes > rawBytes {
+		return entry.MKVOutputPath, true
+	}
+	return entry.HandBrakeOutputPath, false
+}
+
+func moveLibrarySource(entry EncodingParams, destPath string) (keptRaw bool, err error) {
+	src, keptRaw := librarySource(entry)
+	if src == "" {
+		return false, fmt.Errorf("no library source path for disc %d title %d", entry.DiscId, entry.TitleIndex)
+	}
+	if _, statErr := os.Stat(src); statErr != nil {
+		return keptRaw, fmt.Errorf("library source file %s: %w", src, statErr)
+	}
+	if err := moveFile(src, destPath); err != nil {
+		return keptRaw, fmt.Errorf("could not move file to library: %w", err)
+	}
+	if keptRaw {
+		if rmErr := os.Remove(entry.HandBrakeOutputPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			fmt.Printf("Warning: kept raw in library but could not delete larger encode %s: %v\n", entry.HandBrakeOutputPath, rmErr)
+		}
+		fmt.Printf("Moved to library (kept raw; encode was larger): %s\n", destPath)
+	} else {
+		fmt.Printf("Moved to library: %s\n", destPath)
+	}
+	return keptRaw, nil
 }
 
 func moveFile(src, dest string) error {
