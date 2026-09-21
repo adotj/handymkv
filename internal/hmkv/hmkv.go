@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -246,6 +247,10 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
 	// Start central refresh ticker for display updates
 	stopRefreshTicker := tracker.startRefreshTicker(ctx)
 
+	var discFreeNotifyOnce sync.Once
+	var ripsCompleted atomic.Int32
+	totalTitles := len(processTitles)
+
 	// MKV
 	processWaitGroup.Add(1)
 
@@ -277,7 +282,7 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
 
 			go func() {
 				defer rippingWaitGroup.Done()
-				ripTitles(mkv, ctx, &tracker, discTitles, config, encChannel, cancelProcessing)
+				ripTitles(mkv, ctx, &tracker, discTitles, config, encChannel, cancelProcessing, &ripsCompleted)
 			}()
 		}
 
@@ -286,8 +291,6 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
 
 	// HB
 	processWaitGroup.Add(1)
-
-	var encodingNotifyOnce sync.Once
 
 	go func() {
 		defer processWaitGroup.Done()
@@ -298,9 +301,11 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
 					return
 				}
 
-				encodingNotifyOnce.Do(func() {
-					notifyEncodingStarted(config, processTitles, opts, tvMeta)
-				})
+				if int(ripsCompleted.Load()) == totalTitles {
+					discFreeNotifyOnce.Do(func() {
+						notifyDiscFree(config, processTitles, opts, tvMeta)
+					})
+				}
 
 				tracker.applyChange(params.TitleIndex, params.DiscId, func(status *titleStatus) {
 					status.Encoding = InProgress
@@ -461,7 +466,8 @@ func ripTitles(
 	processTitles []TitleInfo,
 	config *handyMKVConfig,
 	encChannel chan EncodingParams,
-	cancelProcessing context.CancelFunc) {
+	cancelProcessing context.CancelFunc,
+	ripsCompleted *atomic.Int32) {
 
 	for _, title := range processTitles {
 		mkvOutputDirectory := filepath.Join(config.MKVOutputDirectory, title.Subdirectory())
@@ -530,6 +536,7 @@ func ripTitles(
 		enc.RippedFileSizeBytes = rippedSizeBytes
 		enc.RippingDuration = ripDuration.String()
 
+		ripsCompleted.Add(1)
 		encChannel <- enc
 	}
 }
