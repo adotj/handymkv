@@ -27,6 +27,93 @@ As I developed HandyMKV, I found that I was able to add features that I found us
 - ntfy notifications — push alerts to your phone when encoding starts or a run fails (via [ntfy.sh](https://ntfy.sh))
 - Parsing of `HandBrakeCLI` and `makemkvcon` output to provide a more user-friendly experience
 
+## Objectives
+
+### Time Saving
+
+Its primary aim is to save time and effort by removing the disconnected nature of performing these tasks manually and/or sequentially. Concurrency is used to reduce the overall time taken to complete the process.
+
+### Ease of Use
+
+HandyMKV is designed to be easy to setup and use. Once a configuration has been created the process of ripping and encoding a disc is simplified to a single command and a few prompts.
+
+Output from the process is displayed in a clear and concise manner to keep the user informed of the progress of the tasks.
+
+### Flexibility
+
+HandyMKV is designed to be flexible. The user can select which titles to rip from the disc and can configure the encoding options to suit their needs. Encoding options can be setup in three ways: 
+
+- Using HandyMKV Simplified Encoding Options - Essentially a collection of settings which are meant to address the most common use cases. These settings are designed to be easy to use and understand. These are gathered via a series of prompts during the configuration process with sensible defaults (where possible).
+- Using Built-in HandBrake Presets - HandyMKV can be setup to use a specific built-in HandBrake preset. This option is for users who are familiar with HandBrake and have a specific preset they want to use.
+- Using a Custom HandBrake Preset File - HandyMKV can be setup to use a custom HandBrake preset file. This option offers the most granular control over the encoding process but requires the user to create a HandBrake preset file.
+
+## Prerequisites
+
+### Supported Operating Systems
+
+HandyMKV is designed to work on Windows, MacOS, and Linux.
+
+### MakeMKV
+
+MakeMKV is a tool that is used to rip the contents of a disc to a file on the local system. Note: this tool is not free and a license must be purchased for use.
+
+Specifically the `makemkvcon` command is used to interact with MakeMKV from the command line. The `makemkvcon` command must be in the system path for HandyMKV to work.
+
+MakeMKV can be downloaded from [here](https://www.makemkv.com/).
+
+Documentation for makemkvcon can be found [here](https://www.makemkv.com/developers/usage.txt).
+
+#### A Note for Mac Users 
+
+`makemkvcon` is not included in the $PATH by default when MakeMKV is installed. However, the binary is included in the MakeMKV.app bundle. The binary can be found at `/Applications/MakeMKV.app/Contents/MacOS/makemkvcon`. You can add this to your $PATH or create a symlink to it in a directory that is in your $PATH.
+
+### Handbrake
+
+Handbrake is a tool that is used to encode video files. The `HandBrakeCLI` command is used to interact with Handbrake from the command line. The `HandBrakeCLI` command must be in the system path for HandyMKV to work.
+
+The HandBrakeCLI can be installed from [here](https://handbrake.fr/downloads2.php). Note: HandBrake is free to use. See the HandBrake website for more information.
+
+Documentation for the HandBrakeCLI can be found [here](https://handbrake.fr/docs/en/latest/cli/cli-guide.html). This is not needed for usage with HandyMKV but is useful for context.
+
+## Command Line Options
+
+HandyMKV has a number of command line options and subcommands that can be used to control its behavior.
+
+```shell
+Usage of handymkv:
+  -a string
+        Automations. A comma delimited list of automation names to run after encoding.
+        Example: -a move-to-plex,notify-discord
+  -d string
+        Discs. A comma delimited list of disc indexes to rip. Example: -d 0,1,2 (default "0")
+  -e int
+        Starting episode number for TV mode (default 1).
+  -n string
+        Movie/series name. Jellyfin-style name with year, e.g. "The Shining (1980)" or "Star Trek (1966)", or name only with -y.
+  -S int
+        Season number for TV mode (0 = specials). Required for unattended TV rips.
+  -t string
+        Title selection. Use 'longest', 'all', or comma-separated title IDs to skip the prompt.
+  -tv
+        TV mode. Rip selected titles as sequential episodes into Jellyfin TV season folders.
+  -y string
+        Release year. Four digits, e.g. 1980. Skips year prompts.
+  -v    Version. Prints the version of the application.
+
+Subcommands:
+  config                Show the current configuration.
+  config setup          Run the configuration wizard.
+  config edit           Open the config file in the default editor.
+  discs                 List available discs.
+  history               Show a summary list of past runs.
+  history <number>      Show details for a specific past run.
+  history clear         Delete all manifest files from the run history directory.
+  automations           List all saved automations.
+  automations create    Create a new automation.
+  automations show <name>   Show details of an automation.
+  automations delete <name> Delete an automation.
+```
+
 ## Installation
 
 ### Install Script (Linux and macOS)
@@ -37,16 +124,342 @@ The quickest way to install HandyMKV on Linux or macOS is with the install scrip
 curl -fsSL https://raw.githubusercontent.com/adotj/handymkv/release/install.sh | bash
 ```
 
+The script automatically detects your OS and architecture, downloads the appropriate binary from the latest release, and installs it to `/usr/local/bin` (or `~/.local/bin` if `/usr/local/bin` is not writable).
+
 ### Pre-built Binaries
 
-Pre-built binaries are available on the [Releases](https://github.com/adotj/handymkv/releases) page.
+Pre-built binaries are available on the [Releases](https://github.com/adotj/handymkv/releases) page for the following platforms:
+
+- Linux (AMD64, ARM64)
+- macOS (Intel, Apple Silicon)
+- Windows (AMD64, ARM64)
+
+Download the appropriate binary for your system, place it in a directory on your `$PATH`, and you're ready to go.
 
 ### Installing with Go
+
+HandyMKV can be installed using the `go install` command:
 
 ```shell
 go install github.com/adotj/handymkv/cmd/handymkv@latest
 ```
 
-Build from source with `make current` or `go build -o bin/handymkv ./cmd/handymkv`.
+This requires Go to be installed on the system. Go can be installed from [here](https://go.dev/doc/install).
 
-Screenshot: ![alt text](https://github.com/adotj/handymkv/blob/release/doc/handymkv_process_in_progress.png?raw=true)
+### Building from Source
+
+If you have cloned the repository, you can build HandyMKV using the provided Makefile or Go commands directly.
+
+#### Using Make (Recommended)
+
+The Makefile provides convenient targets for building HandyMKV for various platforms:
+
+**Build for your current system:**
+```shell
+make current
+```
+This will create a binary in `bin/handymkv` (or `bin/handymkv.exe` on Windows).
+
+**Install to your GOPATH/bin:**
+```shell
+make install
+```
+This installs the binary to your Go bin directory, making it available system-wide.
+
+**Cross-compile for all supported platforms:**
+```shell
+make all
+```
+This builds binaries for Linux, macOS, and Windows (both AMD64 and ARM64 architectures) in separate subdirectories under `bin/`.
+
+**Cross-compile for a specific platform:**
+```shell
+make linux-amd64      # Linux AMD64
+make linux-arm64      # Linux ARM64
+make darwin-amd64     # macOS Intel
+make darwin-arm64     # macOS Apple Silicon
+make windows-amd64    # Windows AMD64
+make windows-arm64    # Windows ARM64
+```
+
+**Clean build artifacts:**
+```shell
+make clean
+```
+
+**View all available targets:**
+```shell
+make help
+```
+
+#### Using Go Commands Directly
+
+Alternatively, you can build using Go commands:
+
+```shell
+# Build for current system
+go build -o bin/handymkv ./cmd/handymkv
+
+# Install to GOPATH/bin
+go install ./cmd/handymkv
+
+# Cross-compile (example for Linux AMD64)
+GOOS=linux GOARCH=amd64 go build -o bin/linux-amd64/handymkv ./cmd/handymkv
+```
+
+## Basic Usage
+
+The first step is to create a configuration file. This can be done by running the following command:
+
+```shell
+handymkv config setup
+```
+
+This will start the configuration wizard. It will prompt you for encode settings and various operational settings. Once saved, the configuration will be stored in a file called `config.json`. The location of that file depends on whether user-wide or directory-wide configuration is used.
+
+- On Unix systems, the user-wide configuration file is stored at '~/.config/handymkv/config.json'.
+- On Windows systems, the user-wide configuration file is stored at '%APPDATA%\\handymkv\\config.json'.
+
+Then to rip and encode a disc, run the following command:
+
+```shell
+handymkv
+```
+
+This will first read the titles on the disc and prompt you to select which titles to rip. Titles are selected by providing the index of each title. Multiple titles can be selected by providing a comma delimited list. Example: `0, 1, 3,4`. Once you have selected the titles to rip, the process will begin. The progress of the process will be displayed in the terminal.
+
+![alt text](https://github.com/adotj/handymkv/blob/release/doc/handymkv_process_in_progress.png?raw=true)
+
+Once the process is complete, a summary will be displayed showing the space saved and the time taken to complete the process.
+
+All output files will be stored in the directory specified in the configuration file.
+
+Note: If there is a `config.json` file in the working directory at execution time, that file will be used instead of the user-wide configuration file.
+
+## Run History
+
+After each run, HandyMKV writes a manifest file recording what was ripped and encoded, file sizes, durations, and whether raw MKV files were deleted. These manifests can be browsed at any time with the `history` subcommand.
+
+**List all past runs:**
+```shell
+handymkv history
+```
+
+**Inspect a specific run:**
+```shell
+handymkv history 3
+```
+
+**Clear all saved history:**
+```shell
+handymkv history clear
+```
+This will show the number of files to be deleted and prompt for confirmation before proceeding.
+
+### Manifest File Location
+
+By default, manifest files are stored alongside the main configuration:
+
+- Unix: `~/.config/handymkv/manifests/`
+- Windows: `%APPDATA%\\handymkv\\manifests\\`
+
+A custom directory can be set during the configuration wizard (`handymkv config setup`), or by setting `manifest_directory` in `config.json`.
+
+### Disabling Run History
+
+Run history can be disabled entirely via the configuration wizard or by setting `"disable_manifests": true` in `config.json`. When disabled, `handymkv history` and `handymkv history clear` will display an informational message rather than attempting to read or modify manifest files.
+
+## Notifications (ntfy)
+
+HandyMKV can send push notifications to your phone when ripping finishes and encoding begins, or when a run fails. This uses [ntfy.sh](https://ntfy.sh), a free pub-sub notification service.
+
+### iPhone setup (one time)
+
+1. Install the **ntfy** app from the App Store.
+2. Tap **+** → **Subscribe to topic**.
+3. Enter a **private, unguessable topic name** (e.g. `handymkv-yourname-x7k2m9`). Topics are public unless you configure ntfy authentication, so avoid generic names like `handymkv`.
+4. Leave the default server as `https://ntfy.sh`.
+
+### Server setup
+
+Set your topic in the config file. The setup wizard will ask for it, or add it manually:
+
+```json
+{
+  "mkv_output_directory": "D:\\\\handymkv\\\\mkvoutput",
+  "library_root": "D:\\\\movies",
+  "tv_library_root": "D:\\\\tv",
+  "ntfy_topic": "handymkv-yourname-x7k2m9",
+  "ntfy_server": "https://ntfy.sh"
+}
+```
+
+- `ntfy_topic` — required to enable notifications. Leave blank or omit to disable.
+- `ntfy_server` — optional. Defaults to `https://ntfy.sh`. Change only if you self-host ntfy.
+- `library_root` — Jellyfin movie library root (default `D:\\movies` on Windows).
+- `tv_library_root` — Jellyfin TV shows library root (default `D:\\tv` on Windows).
+
+Test from your server (PowerShell):
+
+```powershell
+Invoke-RestMethod -Uri "https://ntfy.sh/your-topic" -Method Post -Body "test" -Headers @{ Title = "HandyMKV test" }
+```
+
+You should receive the notification on your phone immediately.
+
+### What gets sent
+
+| Event | Notification title | When |
+|-------|-------------------|------|
+| Ready for next disc | `HandyMKV — Ready for next disc` | When the first title finishes ripping and encoding starts |
+| Failure | `HandyMKV — Action needed` | If ripping, encoding, or library organization fails |
+
+The ready notification includes the movie or series name and the number of titles being encoded.
+
+### Unattended rips (important)
+
+Notifications only fire when encoding **starts** or the pipeline **fails**. If HandyMKV is waiting for interactive input, no notification is sent. For hands-off rips on a headless server, pass flags that skip all prompts:
+
+```powershell
+handymkv -t longest -n "The Matrix (1999)"
+```
+
+Or provide the name and year separately:
+
+```powershell
+handymkv -t longest -n "The Matrix" -y 1999
+```
+
+- `-t longest` — auto-select the longest title (skip title prompt)
+- `-n` / `-y` — skip movie naming prompts during library organization
+
+### TV season discs
+
+For DVDs where each episode is a separate MakeMKV title, use `-tv`. Episodes are numbered sequentially and organized like:
+
+```text
+D:\\tv\\Star Trek (1966)\\Season 01\\Star Trek (1966) - S01E01.mkv
+```
+
+Interactive:
+
+```powershell
+handymkv -tv
+```
+
+Unattended (first disc of a season):
+
+```powershell
+handymkv -tv -t all -n "Star Trek (1966)" -S 1 -e 1
+```
+
+Continue numbering on the next disc:
+
+```powershell
+handymkv -tv -t all -n "Star Trek (1966)" -S 1 -e 5
+```
+
+- `-tv` — TV mode (Jellyfin season folders under `tv_library_root`)
+- `-t all` or `-t 0,1,2` — select episode titles without prompting
+- `-S` / `-e` — season and starting episode number
+- `-n` / `-y` — series name (and optional year)
+
+## Automations
+
+Automations let you run local scripts or commands after HandyMKV finishes encoding. Each automation is a standalone configuration that defines a command to run and the parameters it needs. Parameters can be sourced from different places: prompted at runtime, hardcoded static defaults, or populated automatically from HandyMKV run data.
+
+Scripts receive their parameters as environment variables with the prefix `HMKV_PARAM_`. For example, a parameter named `destination_dir` becomes `HMKV_PARAM_DESTINATION_DIR`. Environment variables were chosen over command line arguments to maximize compatibility across programming languages and operating systems — argument parsing conventions vary widely between shells and runtimes (flag prefixes, quoting rules, whitespace handling), whereas environment variables are read the same way everywhere.
+
+### Managing Automations
+
+```shell
+handymkv automations              # List all saved automations
+handymkv automations create       # Create a new automation (interactive wizard)
+handymkv automations show <name>  # Show details of an automation
+handymkv automations delete <name># Delete an automation
+```
+
+Automation files are stored as JSON in:
+- Unix: `~/.config/handymkv/automations/`
+- Windows: `%APPDATA%\\handymkv\\automations\\`
+
+> **Unix note:** Scripts must be executable before HandyMKV can run them. Make sure to run `chmod +x /path/to/your/script.sh` after creating the script.
+
+### Running Automations
+
+Use the `-a` flag to specify automations by name: `handymkv -a move-to-plex,notify-discord`
+
+Automations run after encoding completes. If the same name is provided more than once, it will only run once.
+
+### Parameter Sources
+
+When creating an automation, each parameter has a **source** that determines how its value is obtained:
+
+| Source | Description |
+|--------|-------------|
+| `prompt` | Asks the user for a value before the run starts (supports an optional default) |
+| `static` | Uses a hardcoded value — never prompts the user |
+| `hmkv_output` | Populated automatically from HandyMKV run data after encoding completes |
+
+Scripts inherit the full OS environment, so they can read environment variables (like API keys or webhook URLs) directly without needing a dedicated parameter.
+
+### `hmkv_output` Keys
+
+| Key | Value |
+|-----|-------|
+| `hb_output_dir` | Absolute path to the HandBrake output directory for this run |
+| `mkv_output_dir` | Absolute path to the raw MKV output directory for this run |
+| `run_duration` | Duration string, e.g. `12m34s` |
+| `title_count` | Number of titles processed (integer string) |
+| `raw_files_deleted` | `"true"` or `"false"` |
+| `total_raw_size` | Total size of raw MKV files in bytes (integer string) |
+| `total_encoded_size` | Total size of encoded output files in bytes (integer string) |
+
+> **Note:** Automations run *before* raw MKV files are deleted. If your script needs to act on the raw files (e.g. inspect or move them), it will have access to them via `mkv_output_dir`.
+
+### Example: Move Encoded Files to a Media Directory
+
+Create an automation using the included example script:
+
+```shell
+handymkv automations create
+```
+
+Configure it with:
+- **Name**: `move-media`
+- **Command**: `/path/to/examples/automations/move-media.sh`
+- **Param 1**: `encoded_dir` (source: `hmkv_output`, key: `hb_output_dir`)
+- **Param 2**: `media_dir` (source: `prompt`)
+- **Param 3**: `group_name` (source: `static`, value: `media` or your group name)
+
+The script strips the trailing `_t##` identifier MakeMKV appends to filenames (e.g. `My_Movie_t00.mkv` → `My_Movie.mkv`), sets group ownership and permissions, then moves files to the destination directory.
+
+### Error Handling
+
+If an automation script fails (non-zero exit code), HandyMKV prints a warning and continues with the next automation. Script failures never abort the pipeline.
+
+```
+Running automations...
+  move-to-plex: OK
+  notify-discord: FAILED (exit code 1)
+```
+
+Exit codes are recorded in the run manifest and are visible when inspecting history with `handymkv history <number>`.
+
+### Example Scripts
+
+An example automation script is available in the repository under [`examples/automations/`](examples/automations/). It demonstrates all three parameter source types: `hmkv_output` (encoded output directory), `prompt` (destination media directory), and `static` (group name).
+
+## Multi-Disc Support
+
+HandyMKV supports ripping and encoding multiple discs in a single run. This option is intended for when mutliple disc drives are available and connected to the host.
+
+During such multi-disc runs the output files will be sorted into subdirectories that indicate the disc they originated from.
+
+To rip and encode multiple discs, simply provide a comma delimited list of disc indexes to the `-d` flag. Example: `handymkv -d 0,1,2`.
+
+To see a list of available discs, use the `discs` subcommand. Example: `handymkv discs`.
+
+## A Note on Concurrency
+
+HandyMKV will attempt to execute tasks concurrently to reduce the overall time taken to complete the process. However, encoding tasks are resource intensive and running multiple encoding tasks is likely to slow down the overall process. Likewise ripping tasks are bottle-necked by the speed of the disc drive. For this reason HandyMKV will execute ripping and encoding pipelines concurrently but each task in those pipelines will be executed sequentially. In multi-disc runs, each disc drive's ripping process will be processed concurrently.
