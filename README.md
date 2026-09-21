@@ -218,7 +218,7 @@ handymkv config setup
 This will start the configuration wizard. It will prompt you for encode settings and various operational settings. Once saved, the configuration will be stored in a file called `config.json`. The location of that file depends on whether user-wide or directory-wide configuration is used.
 
 - On Unix systems, the user-wide configuration file is stored at '~/.config/handymkv/config.json'.
-- On Windows systems, the user-wide configuration file is stored at '%APPDATA%\handymkv\config.json'.
+- On Windows systems, the user-wide configuration file is stored at '%APPDATA%\\handymkv\\config.json'.
 
 Then to rip and encode a disc, run the following command:
 
@@ -261,7 +261,7 @@ This will show the number of files to be deleted and prompt for confirmation bef
 By default, manifest files are stored alongside the main configuration:
 
 - Unix: `~/.config/handymkv/manifests/`
-- Windows: `%APPDATA%\handymkv\manifests\`
+- Windows: `%APPDATA%\\handymkv\\manifests\\`
 
 A custom directory can be set during the configuration wizard (`handymkv config setup`), or by setting `manifest_directory` in `config.json`.
 
@@ -286,9 +286,9 @@ Set your topic in the config file. The setup wizard will ask for it, or add it m
 
 ```json
 {
-  "mkv_output_directory": "D:\\handymkv\\mkvoutput",
-  "library_root": "D:\\movies",
-  "tv_library_root": "D:\\tv",
+  "mkv_output_directory": "D:\\\\handymkv\\\\mkvoutput",
+  "library_root": "D:\\\\movies",
+  "tv_library_root": "D:\\\\tv",
   "ntfy_topic": "handymkv-yourname-x7k2m9",
   "ntfy_server": "https://ntfy.sh"
 }
@@ -296,8 +296,8 @@ Set your topic in the config file. The setup wizard will ask for it, or add it m
 
 - `ntfy_topic` — required to enable notifications. Leave blank or omit to disable.
 - `ntfy_server` — optional. Defaults to `https://ntfy.sh`. Change only if you self-host ntfy.
-- `library_root` — Jellyfin movie library root (default `D:\movies` on Windows).
-- `tv_library_root` — Jellyfin TV shows library root (default `D:\tv` on Windows).
+- `library_root` — Jellyfin movie library root (default `D:\\movies` on Windows).
+- `tv_library_root` — Jellyfin TV shows library root (default `D:\\tv` on Windows).
 
 Test from your server (PowerShell):
 
@@ -338,7 +338,7 @@ handymkv -t longest -n "The Matrix" -y 1999
 For DVDs where each episode is a separate MakeMKV title, use `-tv`. Episodes are numbered sequentially and organized like:
 
 ```text
-D:\tv\Star Trek (1966)\Season 01\Star Trek (1966) - S01E01.mkv
+D:\\tv\\Star Trek (1966)\\Season 01\\Star Trek (1966) - S01E01.mkv
 ```
 
 Interactive:
@@ -381,7 +381,7 @@ handymkv automations delete <name># Delete an automation
 
 Automation files are stored as JSON in:
 - Unix: `~/.config/handymkv/automations/`
-- Windows: `%APPDATA%\handymkv\automations\`
+- Windows: `%APPDATA%\\handymkv\\automations\\`
 
 > **Unix note:** Scripts must be executable before HandyMKV can run them. Make sure to run `chmod +x /path/to/your/script.sh` after creating the script.
 
@@ -463,9 +463,3 @@ To see a list of available discs, use the `discs` subcommand. Example: `handymkv
 ## A Note on Concurrency
 
 HandyMKV will attempt to execute tasks concurrently to reduce the overall time taken to complete the process. However, encoding tasks are resource intensive and running multiple encoding tasks is likely to slow down the overall process. Likewise ripping tasks are bottle-necked by the speed of the disc drive. For this reason HandyMKV will execute ripping and encoding pipelines concurrently but each task in those pipelines will be executed sequentially. In multi-disc runs, each disc drive's ripping process will be processed concurrently.
-
-## Support
-
-If you find HandyMKV useful, please consider supporting the project:
-
-[Buy me a coffee on Ko-fi](https://ko-fi.com/dmars8047)
