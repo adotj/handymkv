@@ -1,3 +1,3 @@
-module github.com/dmars8047/handymkv
+module github.com/adotj/handymkv
 
 go 1.23.2

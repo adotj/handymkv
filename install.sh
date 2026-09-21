@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="dmars8047/handymkv"
+REPO="adotj/handymkv"
 BINARY="handymkv"
 INSTALL_DIR="/usr/local/bin"
 
