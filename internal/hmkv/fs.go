@@ -23,7 +23,16 @@ func getFileSize(filePath string) (int64, error) {
 	return fileInfo.Size(), nil
 }
 
-func deleteRawFiles(config *handyMKVConfig) {
+func deleteRawFiles(config *handyMKVConfig, manifestEntries []EncodingParams) {
+	for _, entry := range manifestEntries {
+		if entry.LibraryEncodeUnverified {
+			fmt.Printf("\nSkipping raw staging cleanup: at least one encode was not verified against its rip.\n")
+			return
+		}
+	}
+
+	// Titles that kept the raw rip in the library no longer have that MKV under
+	// MKVOutputDirectory (it was moved during finalize). This removes only leftover staging rips.
 	// Check if the directory still exists (it may have been moved by an automation)
 	if _, err := os.Stat(config.MKVOutputDirectory); os.IsNotExist(err) {
 		fmt.Printf("\nRaw MKV output directory no longer exists (may have been moved by an automation). Skipping deletion.\n")
