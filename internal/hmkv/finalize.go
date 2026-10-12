@@ -54,6 +54,9 @@ func finalizeEncodedTitle(
 				entry.EncodedFileSizeBytes = entry.RippedFileSizeBytes
 			}
 		}
+		if !verifyEncodeForLibrary(*entry).Verified {
+			entry.LibraryEncodeUnverified = true
+		}
 
 		if err := appendRipHistory([]EncodingParams{*entry}, []TitleInfo{title}, paths); err != nil {
 			fmt.Printf("Warning: encoded file moved to library but rip stats were not updated: %v\n", err)
@@ -110,7 +113,7 @@ func organizeMovieEntriesToLibrary(entries []EncodingParams, titles []TitleInfo,
 			return finalPaths, keptRawCount, fmt.Errorf("library file already exists: %s", destPath)
 		}
 
-		keptRaw, err := moveLibrarySource(entry, destPath)
+		keptRaw, _, err := moveLibrarySource(entry, destPath)
 		if err != nil {
 			return finalPaths, keptRawCount, err
 		}

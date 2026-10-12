@@ -197,6 +197,8 @@ func TestFinalizeEncodedTitleKeepsRawWhenEncodeLarger(t *testing.T) {
 	finalizeLockPathOverride = lockFile
 	t.Cleanup(func() { finalizeLockPathOverride = "" })
 
+	installMediaProbeFixtures(t, verifiedMovieProbeFixtures(raw, enc))
+
 	entry := EncodingParams{
 		DiscId:               0,
 		TitleIndex:           0,
@@ -204,6 +206,7 @@ func TestFinalizeEncodedTitleKeepsRawWhenEncodeLarger(t *testing.T) {
 		HandBrakeOutputPath:  enc,
 		RippedFileSizeBytes:  50,
 		EncodedFileSizeBytes: 500,
+		HandBrakeExitCode:    0,
 	}
 	title := TitleInfo{DiscId: 0, Index: 0, FileName: "t.mkv", DiscTitle: "DISC"}
 	config := &handyMKVConfig{LibraryRoot: libraryRoot}

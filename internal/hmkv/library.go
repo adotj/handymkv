@@ -447,7 +447,7 @@ func organizeTVEpisodesToLibrary(entries []EncodingParams, titles []TitleInfo, c
 			return finalPaths, keptRawCount, fmt.Errorf("library file already exists: %s", destPath)
 		}
 
-		keptRaw, err := moveLibrarySource(entry, destPath)
+		keptRaw, _, err := moveLibrarySource(entry, destPath)
 		if err != nil {
 			return finalPaths, keptRawCount, err
 		}
@@ -698,9 +698,17 @@ func effectiveLibraryFileSizes(entry EncodingParams) (rawBytes, encBytes int64) 
 	return rawBytes, encBytes
 }
 
-// librarySource selects the file to place in the Jellyfin library. When the encode is
-// strictly larger than the raw rip, the raw MKV is kept instead.
-func librarySource(entry EncodingParams) (srcPath string, keptRaw bool) {
+// librarySource selects the file to place in the Jellyfin library when the encode has
+// been verified against the raw rip. When the encode is strictly larger than the raw
+// rip, the raw MKV is kept instead.
+func librarySource(entry EncodingParams, verified bool) (srcPath string, keptRaw bool) {
+	if !verified {
+		if entry.MKVOutputPath != "" {
+			return entry.MKVOutputPath, true
+		}
+		return entry.HandBrakeOutputPath, false
+	}
+
 	rawBytes, encBytes := effectiveLibraryFileSizes(entry)
 	if rawBytes > 0 && encBytes > 0 && encBytes > rawBytes {
 		return entry.MKVOutputPath, true
@@ -708,26 +716,36 @@ func librarySource(entry EncodingParams) (srcPath string, keptRaw bool) {
 	return entry.HandBrakeOutputPath, false
 }
 
-func moveLibrarySource(entry EncodingParams, destPath string) (keptRaw bool, err error) {
-	src, keptRaw := librarySource(entry)
+func moveLibrarySource(entry EncodingParams, destPath string) (keptRaw bool, unverified bool, err error) {
+	verification := verifyEncodeForLibrary(entry)
+	unverified = !verification.Verified
+	if unverified {
+		fmt.Printf("Encode not verified for disc %d title %d (%s); keeping raw in library and retaining staging files.\n",
+			entry.DiscId, entry.TitleIndex, verification.Reason)
+	}
+
+	src, keptRaw := librarySource(entry, verification.Verified)
 	if src == "" {
-		return false, fmt.Errorf("no library source path for disc %d title %d", entry.DiscId, entry.TitleIndex)
+		return false, unverified, fmt.Errorf("no library source path for disc %d title %d", entry.DiscId, entry.TitleIndex)
 	}
 	if _, statErr := os.Stat(src); statErr != nil {
-		return keptRaw, fmt.Errorf("library source file %s: %w", src, statErr)
+		return keptRaw, unverified, fmt.Errorf("library source file %s: %w", src, statErr)
 	}
 	if err := moveFile(src, destPath); err != nil {
-		return keptRaw, fmt.Errorf("could not move file to library: %w", err)
+		return keptRaw, unverified, fmt.Errorf("could not move file to library: %w", err)
 	}
-	if keptRaw {
+
+	if keptRaw && verification.Verified {
 		if rmErr := os.Remove(entry.HandBrakeOutputPath); rmErr != nil && !os.IsNotExist(rmErr) {
 			fmt.Printf("Warning: kept raw in library but could not delete larger encode %s: %v\n", entry.HandBrakeOutputPath, rmErr)
 		}
 		fmt.Printf("Moved to library (kept raw; encode was larger): %s\n", destPath)
+	} else if keptRaw && unverified {
+		fmt.Printf("Moved to library (kept raw; encode unverified): %s\n", destPath)
 	} else {
 		fmt.Printf("Moved to library: %s\n", destPath)
 	}
-	return keptRaw, nil
+	return keptRaw, unverified, nil
 }
 
 func moveFile(src, dest string) error {

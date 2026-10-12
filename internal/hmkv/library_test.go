@@ -359,7 +359,7 @@ func TestLibrarySourceKeepsSmallerFile(t *testing.T) {
 				RippedFileSizeBytes:  tt.rawSize,
 				EncodedFileSizeBytes: tt.encSize,
 			}
-			src, keptRaw := librarySource(entry)
+			src, keptRaw := librarySource(entry, true)
 			if keptRaw != tt.wantRaw {
 				t.Fatalf("keptRaw = %v, want %v", keptRaw, tt.wantRaw)
 			}
@@ -393,6 +393,7 @@ func TestOrganizeMovieKeepsRawWhenEncodeLarger(t *testing.T) {
 	if err := os.WriteFile(enc, bytes.Repeat([]byte("b"), 250), 0644); err != nil {
 		t.Fatal(err)
 	}
+	installMediaProbeFixtures(t, verifiedMovieProbeFixtures(raw, enc))
 
 	title := TitleInfo{DiscId: 0, Index: 0, FileName: "title.mkv", DiscTitle: "DISC"}
 	entry := EncodingParams{
@@ -402,6 +403,7 @@ func TestOrganizeMovieKeepsRawWhenEncodeLarger(t *testing.T) {
 		HandBrakeOutputPath:  enc,
 		RippedFileSizeBytes:  100,
 		EncodedFileSizeBytes: 250,
+		HandBrakeExitCode:    0,
 	}
 	config := &handyMKVConfig{LibraryRoot: libraryRoot}
 	opts := ExecOptions{MediaName: "Big Encode", MediaYear: "2020"}

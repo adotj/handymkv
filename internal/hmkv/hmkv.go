@@ -445,7 +445,7 @@ func Exec(mkv *MakeMKV, hb *HandBrakeCLI, opts ExecOptions) (execErr error) {
 
 	// Raw MKVs kept in the library were moved out of MKVOutputDirectory during finalize;
 	// deleteRawFiles only removes remaining staging rips for titles that kept the encode.
-	deleteRawFiles(config)
+	deleteRawFiles(config, manifestEntries)
 
 	if keptRawLibraryCount > 0 {
 		fmt.Printf("\nKept raw MKV in library for %d title(s) where HandBrake output was larger than the rip.\n", keptRawLibraryCount)

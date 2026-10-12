@@ -71,6 +71,8 @@ type EncodingParams struct {
 	ProcessingDuration          time.Duration `json:"-"`
 	CompletedAt                 time.Time     `json:"-"`
 	LibraryKeptRaw              bool          `json:"-"`
+	LibraryEncodeUnverified     bool          `json:"-"`
+	HandBrakeExitCode           int           `json:"-"`
 	Encoder                     string   `json:"-"`
 	EncoderPreset               string   `json:"-"`
 	Quality                     int      `json:"-"`
@@ -166,12 +168,22 @@ func (hb *HandBrakeCLI) encode(ctx context.Context,
 	}
 
 	if err := cmd.Wait(); err != nil {
+		if params != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				params.HandBrakeExitCode = exitErr.ExitCode()
+			} else {
+				params.HandBrakeExitCode = -1
+			}
+		}
 		return NewExternalProcessError(
 			fmt.Errorf("encoding failed for %s: %w", params.MKVOutputPath, err),
 			fmt.Sprintf("HandBrakeCLI Error Output:\n%s", stderrBuf.String()),
 		)
 	}
 
+	if params != nil {
+		params.HandBrakeExitCode = 0
+	}
 	return nil
 }
 
