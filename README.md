@@ -24,7 +24,7 @@ As I developed HandyMKV, I found that I was able to add features that I found us
 - Automated cleanup of raw unencoded files
 - Run history — browse and inspect past ripping/encoding sessions
 - Automations — run custom scripts after encoding with parameters sourced from run data, environment variables, or user prompts
-- ntfy notifications — push alerts to your phone when encoding starts or a run fails (via [ntfy.sh](https://ntfy.sh))
+- ntfy notifications — push alerts when the disc can be ejected (all ripping finished and the last title is encoding) or when a run fails (via [ntfy.sh](https://ntfy.sh))
 - Parsing of `HandBrakeCLI` and `makemkvcon` output to provide a more user-friendly experience
 
 ## Objectives
@@ -271,7 +271,7 @@ Run history can be disabled entirely via the configuration wizard or by setting 
 
 ## Notifications (ntfy)
 
-HandyMKV can send push notifications to your phone when ripping finishes and encoding begins, or when a run fails. This uses [ntfy.sh](https://ntfy.sh), a free pub-sub notification service.
+HandyMKV can send push notifications to your phone when the optical drive is free (all selected titles ripped and HandBrake has started encoding the last one in the queue), or when a run fails. This uses [ntfy.sh](https://ntfy.sh), a free pub-sub notification service.
 
 ### iPhone setup (one time)
 
@@ -311,14 +311,14 @@ You should receive the notification on your phone immediately.
 
 | Event | Notification title | When |
 |-------|-------------------|------|
-| Ready for next disc | `HandyMKV — Ready for next disc` | When the first title finishes ripping and encoding starts |
+| Disc free | `HandyMKV — Disc free` | When all selected titles have finished ripping and HandBrake starts encoding the last title still in the encode queue (not on the first encode while later titles are still ripping) |
 | Failure | `HandyMKV — Action needed` | If ripping, encoding, or library organization fails |
 
-The ready notification includes the movie or series name and the number of titles being encoded.
+The disc-free notification body is `DISC FREE — insert next disc now.` plus a short movie or series label. HandyMKV does **not** notify when encoding finishes or the process exits.
 
 ### Unattended rips (important)
 
-Notifications only fire when encoding **starts** or the pipeline **fails**. If HandyMKV is waiting for interactive input, no notification is sent. For hands-off rips on a headless server, pass flags that skip all prompts:
+Notifications fire when the disc becomes free or the pipeline **fails**. If HandyMKV is waiting for interactive input, no notification is sent. For hands-off rips on a headless server, pass flags that skip all prompts:
 
 ```powershell
 handymkv -t longest -n "The Matrix (1999)"

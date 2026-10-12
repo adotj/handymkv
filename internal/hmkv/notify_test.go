@@ -149,9 +149,10 @@ func TestMovieLabelForNotification(t *testing.T) {
 	})
 }
 
-func TestNotifyEncodingStartedUsesConfig(t *testing.T) {
-	var gotBody string
+func TestNotifyDiscFreeUsesConfig(t *testing.T) {
+	var gotTitle, gotBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotTitle = r.Header.Get("Title")
 		body, _ := io.ReadAll(r.Body)
 		gotBody = string(body)
 		w.WriteHeader(http.StatusOK)
@@ -163,13 +164,16 @@ func TestNotifyEncodingStartedUsesConfig(t *testing.T) {
 		NtfyServer: server.URL,
 	}
 
-	notifyEncodingStarted(config, nil, ExecOptions{MediaName: "Inception (2010)"}, nil)
+	notifyDiscFree(config, nil, ExecOptions{MediaName: "Inception (2010)"}, nil)
 
+	if gotTitle != "HandyMKV — Disc free" {
+		t.Errorf("Title header = %q, want HandyMKV — Disc free", gotTitle)
+	}
+	if !strings.Contains(gotBody, "DISC FREE — insert next disc now.") {
+		t.Errorf("body = %q, want disc-free message", gotBody)
+	}
 	if !strings.Contains(gotBody, "Inception (2010)") {
 		t.Errorf("body = %q, want movie name", gotBody)
-	}
-	if !strings.Contains(gotBody, "now encoding") {
-		t.Errorf("body = %q, want encoding message", gotBody)
 	}
 }
 
